@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getDb, closeDb } from './db/database'
 import { registerIpcHandlers } from './ipc'
+import { setupAppMenu } from './menu'
 
 // Block CommonJS __dirname typing issue under ESM-less environment
 const __dirnameSafe = (() => {
@@ -57,6 +58,9 @@ app.whenReady().then(() => {
 
   // Register all IPC handlers
   registerIpcHandlers()
+
+  // Menu accelerators (hidden menubar, shortcuts still fire when focused)
+  setupAppMenu()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

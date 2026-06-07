@@ -37,6 +37,18 @@ export const notifier = {
           if (!w) return
           if (w.isMinimized()) w.restore()
           w.focus()
+          // Windows foreground workaround: moveTop() after focus()
+          try {
+            w.moveTop()
+          } catch {
+            // ignore
+          }
+          // Tell the renderer to navigate to the session/task this
+          // notification is about (PRD §3.7).
+          w.webContents.send('notification:navigate', {
+            sessionId: input.sessionId,
+            taskId: input.taskId
+          })
         })
         n.show()
       }

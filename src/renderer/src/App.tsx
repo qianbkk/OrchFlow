@@ -7,6 +7,7 @@ import { AuditView } from './views/AuditView'
 import { SettingsView } from './views/SettingsView'
 import { ApprovalCenter } from './components/ApprovalCenter'
 import { useUiStore, type ViewKey } from './stores/ui.store'
+import { useSessionsStore } from './stores/sessions.store'
 
 const VIEWS: Record<ViewKey, React.ComponentType> = {
   sessions: SessionsView,
@@ -28,6 +29,36 @@ function App(): React.JSX.Element {
         console.error('[App] getAppInfo failed:', err)
       })
   }, [])
+
+  // PRD §3.4.3: Ctrl+Shift+S creates a manual checkpoint for the
+  // currently selected session. The menu accelerator (main/menu.ts)
+  // broadcasts 'shortcut:createCheckpoint' when focused.
+  useEffect(() => {
+    const off1 = window.orchflow.on('shortcut:createCheckpoint', async () => {
+      const selectedId = useSessionsStore.getState().selectedId
+      if (!selectedId) return
+      try {
+        await window.orchflow.checkpoints.create(selectedId, 'Manual checkpoint (Ctrl+Shift+S)')
+      } catch (err) {
+        console.error('[shortcut] checkpoint create failed:', err)
+      }
+    })
+    // PRD §3.7: click a Windows notification or in-app notification
+    // → focus the window + navigate to the related Session or Task.
+    const off2 = window.orchflow.on('notification:navigate', (payload: unknown) => {
+      const p = payload as { sessionId?: string; taskId?: string }
+      if (p.sessionId) {
+        setActiveView('sessions')
+        useSessionsStore.getState().select(p.sessionId)
+      } else if (p.taskId) {
+        setActiveView('tasks')
+      }
+    })
+    return () => {
+      off1()
+      off2()
+    }
+  }, [setActiveView])
 
   const Active = VIEWS[activeView] ?? SessionsView
 

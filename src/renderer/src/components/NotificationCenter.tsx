@@ -97,6 +97,19 @@ export function NotificationCenter(): React.JSX.Element {
                     key={n.id}
                     onClick={() => {
                       if (!n.read) void markRead(n.id)
+                      // PRD §3.7: click notification → navigate to session/task
+                      if (n.sessionId) {
+                        import('../stores/ui.store').then((m) => {
+                          m.useUiStore.getState().setActiveView('sessions')
+                        })
+                        import('../stores/sessions.store').then((m) => {
+                          m.useSessionsStore.getState().select(n.sessionId as string)
+                        })
+                      } else if (n.taskId) {
+                        import('../stores/ui.store').then((m) => {
+                          m.useUiStore.getState().setActiveView('tasks')
+                        })
+                      }
                     }}
                     className={`flex cursor-pointer items-start gap-2 border-b border-[var(--color-border-1)]/50 p-3 hover:bg-[var(--color-bg-2)] ${
                       n.read ? 'opacity-60' : ''

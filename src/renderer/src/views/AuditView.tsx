@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { Download } from 'lucide-react'
 import type { AuditEntry } from '@shared/types'
 
 export function AuditView(): React.JSX.Element {
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState<'json' | 'csv' | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -18,11 +20,54 @@ export function AuditView(): React.JSX.Element {
     })()
   }, [])
 
+  const download = async (format: 'json' | 'csv'): Promise<void> => {
+    setExporting(format)
+    try {
+      const content = await window.orchflow.audit.export({}, format)
+      // Trigger a download via a blob URL
+      const blob = new Blob([content], {
+        type: format === 'json' ? 'application/json' : 'text/csv'
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `orchflow-audit-${Date.now()}.${format}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('[AuditView] export failed:', err)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden p-6">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-2)]">
-        Audit Log ({entries.length})
-      </h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-2)]">
+          Audit Log ({entries.length})
+        </h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void download('json')}
+            disabled={exporting !== null || entries.length === 0}
+            className="flex items-center gap-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-2)] px-2 py-1 text-xs hover:bg-[var(--color-bg-3)] disabled:opacity-50"
+          >
+            <Download size={12} />
+            {exporting === 'json' ? 'Exporting…' : 'JSON'}
+          </button>
+          <button
+            onClick={() => void download('csv')}
+            disabled={exporting !== null || entries.length === 0}
+            className="flex items-center gap-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-2)] px-2 py-1 text-xs hover:bg-[var(--color-bg-3)] disabled:opacity-50"
+          >
+            <Download size={12} />
+            {exporting === 'csv' ? 'Exporting…' : 'CSV'}
+          </button>
+        </div>
+      </div>
       {loading ? (
         <p className="text-sm text-[var(--color-text-2)]">Loading…</p>
       ) : entries.length === 0 ? (
