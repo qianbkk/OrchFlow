@@ -49,6 +49,7 @@ export async function removeWorktree(task: Task): Promise<void> {
       await git.raw(['worktree', 'prune'])
     } catch (err2) {
       console.error('[worktree] remove failed:', err2)
+      void err
     }
   }
 }

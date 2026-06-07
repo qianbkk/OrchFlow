@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import type { AgentEvent, Checkpoint, Session, SessionConfig } from '@shared/types'
 import { SessionRepository } from '../db/repositories/session.repository'
+import { TaskRepository } from '../db/repositories/task.repository'
 import { AuditRepository } from '../db/repositories/audit.repository'
 import { getDriver } from '../agents/driver.registry'
 import { approvalGate } from './approval-gate'
@@ -109,12 +110,9 @@ export const sessionManager = {
   async createCheckpoint(sessionId: string, description: string): Promise<Checkpoint> {
     const s = sessions.get(sessionId)
     if (!s) throw new Error(`Session not found: ${sessionId}`)
-    // Need worktree path from task
-    const { TaskRepository } = await import('../db/repositories/task.repository')
     const task = new TaskRepository().get(s.taskId)
     if (!task?.worktreePath) throw new Error('Cannot checkpoint: task has no worktree')
     const cp = await checkpointManager.create(sessionId, s.taskId, task.worktreePath, 'manual', description)
-    // Notify renderers
     for (const w of BrowserWindow.getAllWindows()) {
       try {
         w.webContents.send('checkpoint:created', cp)

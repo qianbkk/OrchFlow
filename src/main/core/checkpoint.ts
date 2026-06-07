@@ -3,6 +3,7 @@ import { simpleGit } from 'simple-git'
 import { existsSync } from 'node:fs'
 import type { Checkpoint, CheckpointType } from '@shared/types'
 import { CheckpointRepository } from '../db/repositories/checkpoint.repository'
+import { TaskRepository } from '../db/repositories/task.repository'
 import { AuditRepository } from '../db/repositories/audit.repository'
 
 const repo = new CheckpointRepository()
@@ -54,10 +55,7 @@ export const checkpointManager = {
   async rollback(checkpointId: string): Promise<void> {
     const cp = repo.get(checkpointId)
     if (!cp) throw new Error(`Checkpoint not found: ${checkpointId}`)
-    // Look up task's worktree from tasks repo
-    const { TaskRepository } = await import('../db/repositories/task.repository')
-    const tasks = new TaskRepository()
-    const task = tasks.get(cp.taskId)
+    const task = new TaskRepository().get(cp.taskId)
     if (!task?.worktreePath) throw new Error('Cannot rollback: task has no worktree path')
     if (!existsSync(task.worktreePath)) throw new Error(`Worktree missing: ${task.worktreePath}`)
 

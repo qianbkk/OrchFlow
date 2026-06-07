@@ -17,6 +17,7 @@ import { sessionManager } from './core/session-manager'
 import { taskManager } from './core/task-manager'
 import { settingsStore } from './core/settings-store'
 import { currentProjectStore } from './core/project-store'
+import { getWorktreeDiff, mergeWorktree, discardWorktree } from './git/worktree'
 
 const projects = new ProjectRepository()
 const tasks = new TaskRepository()
@@ -79,11 +80,9 @@ ipcMain.handle('agents:setConfig', (_e, agentType: string, config: unknown) =>
 
 // Settings (api keys via keytar)
 ipcMain.handle('settings:get', async (_e, key: string): Promise<unknown> => {
-  // Keytar-backed values
   if (key.startsWith('apiKey:')) {
     const agentType = key.slice(7)
-    const v = await keytar.getPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`)
-    return v ?? null
+    return keytar.getPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`)
   }
   return settingsStore.get(key)
 })
@@ -113,17 +112,16 @@ ipcMain.handle('sessions:send', async (_e, sessionId: string, message: string) =
   sessionManager.send(sessionId, message)
 )
 ipcMain.handle('sessions:attachPty', async (_e, sessionId: string) => sessionManager.attachPty(sessionId))
-ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
+ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
   const session = sessions.get(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const task = tasks.get(session.taskId)
   if (!task) throw new Error(`Task not found: ${session.taskId}`)
   const cliPath = getAgentBinaryPath(session.agentType)
-  void shell.openExternal('https://github.com/')
-  // Also spawn a Windows Terminal tab in the worktree
   void exec(
     `wt -w 0 new-tab --title "OrchFlow ${session.agentType}" -d "${task.worktreePath ?? '.'}" "${cliPath}"`
   )
+  void shell.openExternal('https://github.com/')
 })
 
 // Tasks
@@ -147,31 +145,24 @@ ipcMain.handle('checkpoints:create', (_e, sessionId: string, description: string
   sessionManager.createCheckpoint(sessionId, description)
 )
 ipcMain.handle('checkpoints:rollback', async (_e, checkpointId: string) => {
-  const cp = checkpoints.get(checkpointId)
-  if (!cp) throw new Error(`Checkpoint not found: ${checkpointId}`)
+  if (!checkpoints.get(checkpointId)) throw new Error(`Checkpoint not found: ${checkpointId}`)
   await sessionManager.rollbackToCheckpoint(checkpointId)
 })
 
 // Git
-ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => {
-  const { getWorktreeDiff } = await import('./git/worktree')
-  return getWorktreeDiff(worktreePath)
-})
+ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => getWorktreeDiff(worktreePath))
 ipcMain.handle('git:merge', async (_e, taskId: string) => {
-  const { mergeWorktree } = await import('./git/worktree')
   const task = tasks.get(taskId)
   if (!task) throw new Error(`Task not found: ${taskId}`)
   await mergeWorktree(task)
 })
 ipcMain.handle('git:discard', async (_e, taskId: string) => {
-  const { discardWorktree } = await import('./git/worktree')
   const task = tasks.get(taskId)
   if (!task) throw new Error(`Task not found: ${taskId}`)
   await discardWorktree(task)
 })
-ipcMain.handle('git:keep', async (_e, taskId: string) => {
-  const task = tasks.get(taskId)
-  if (!task) throw new Error(`Task not found: ${taskId}`)
+ipcMain.handle('git:keep', (_e, taskId: string) => {
+  if (!tasks.get(taskId)) throw new Error(`Task not found: ${taskId}`)
   tasks.updateStatus(taskId, 'done')
 })
 
@@ -195,6 +186,5 @@ ipcMain.handle('notifications:markRead', (_e, id: number) => notifications.markR
 
 export function registerIpcHandlers(): void {
   // This function is a no-op marker; the module-level handlers above register on import.
-  // Kept for symmetry with future code organization.
   console.log('[ipc] handlers registered')
 }
