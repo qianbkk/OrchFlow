@@ -1,10 +1,10 @@
-import { ipcMain, shell } from 'electron'
+import { ipcMain } from 'electron'
 import { basename } from 'node:path'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { exec } from 'node:child_process'
 import * as keytar from 'keytar'
-import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS } from '@shared/constants'
+import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS, APP_VERSION } from '@shared/constants'
 import type { Project, TaskCreateInput, SessionConfig } from '@shared/types'
 import { ProjectRepository } from './db/repositories/project.repository'
 import { TaskRepository } from './db/repositories/task.repository'
@@ -26,10 +26,21 @@ const audit = new AuditRepository()
 const checkpoints = new CheckpointRepository()
 const notifications = new NotificationRepository()
 
+const requireTask = (id: string): TaskRepository extends { get: (k: string) => infer T } ? T : never => {
+  const t = tasks.get(id)
+  if (!t) throw new Error(`Task not found: ${id}`)
+  return t as never
+}
+
+function csvEscape(v: unknown): string {
+  const s = String(v)
+  return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
+}
+
 // App info
 ipcMain.handle('app:info', () => ({
   name: 'OrchFlow',
-  version: '0.1.0',
+  version: APP_VERSION,
   platform: process.platform
 }))
 
@@ -121,7 +132,6 @@ ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
   void exec(
     `wt -w 0 new-tab --title "OrchFlow ${session.agentType}" -d "${task.worktreePath ?? '.'}" "${cliPath}"`
   )
-  void shell.openExternal('https://github.com/')
 })
 
 // Tasks
@@ -152,17 +162,15 @@ ipcMain.handle('checkpoints:rollback', async (_e, checkpointId: string) => {
 // Git
 ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => getWorktreeDiff(worktreePath))
 ipcMain.handle('git:merge', async (_e, taskId: string) => {
-  const task = tasks.get(taskId)
-  if (!task) throw new Error(`Task not found: ${taskId}`)
-  await mergeWorktree(task)
+  requireTask(taskId)
+  await mergeWorktree(tasks.get(taskId) as never)
 })
 ipcMain.handle('git:discard', async (_e, taskId: string) => {
-  const task = tasks.get(taskId)
-  if (!task) throw new Error(`Task not found: ${taskId}`)
-  await discardWorktree(task)
+  requireTask(taskId)
+  await discardWorktree(tasks.get(taskId) as never)
 })
 ipcMain.handle('git:keep', (_e, taskId: string) => {
-  if (!tasks.get(taskId)) throw new Error(`Task not found: ${taskId}`)
+  requireTask(taskId)
   tasks.updateStatus(taskId, 'done')
 })
 
@@ -174,7 +182,7 @@ ipcMain.handle('audit:export', async (_e, filters: unknown, format: 'json' | 'cs
   const header = 'timestamp,actor,action_type,risk_level,approval_status,task_id,session_id'
   const lines = entries.map((e) =>
     [e.timestamp, e.actor, e.actionType, e.riskLevel ?? '', e.approvalStatus ?? '', e.taskId ?? '', e.sessionId ?? '']
-      .map((v) => String(v).includes(',') ? `"${String(v).replace(/"/g, '""')}"` : v)
+      .map(csvEscape)
       .join(',')
   )
   return [header, ...lines].join('\n')
@@ -185,6 +193,7 @@ ipcMain.handle('notifications:list', () => notifications.list())
 ipcMain.handle('notifications:markRead', (_e, id: number) => notifications.markRead(id))
 
 export function registerIpcHandlers(): void {
-  // This function is a no-op marker; the module-level handlers above register on import.
+  // Handlers register on module import (above). This marker exists so the
+  // main process can call it at a known point in startup.
   console.log('[ipc] handlers registered')
 }

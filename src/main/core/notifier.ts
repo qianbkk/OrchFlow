@@ -1,6 +1,7 @@
 import { BrowserWindow, Notification as ElectronNotification } from 'electron'
 import type { Notification, NotificationType } from '@shared/types'
 import { NotificationRepository } from '../db/repositories/notification.repository'
+import { broadcast } from './broadcast'
 
 const repo = new NotificationRepository()
 
@@ -22,17 +23,8 @@ export const notifier = {
       read: false
     }
     const id = repo.create(item)
+    broadcast('notification:new', { ...item, id })
 
-    // Send to all renderers
-    for (const w of BrowserWindow.getAllWindows()) {
-      try {
-        w.webContents.send('notification:new', { ...item, id })
-      } catch (err) {
-        console.error('[notifier] send failed:', err)
-      }
-    }
-
-    // Windows native notification
     try {
       if (ElectronNotification.isSupported()) {
         const n = new ElectronNotification({
@@ -41,15 +33,10 @@ export const notifier = {
           silent: false
         })
         n.on('click', () => {
-          try {
-            const w = BrowserWindow.getAllWindows()[0]
-            if (w) {
-              if (w.isMinimized()) w.restore()
-              w.focus()
-            }
-          } catch (err) {
-            console.error('[notifier] focus failed:', err)
-          }
+          const w = BrowserWindow.getAllWindows()[0]
+          if (!w) return
+          if (w.isMinimized()) w.restore()
+          w.focus()
         })
         n.show()
       }

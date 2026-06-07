@@ -1,21 +1,14 @@
 // Tracks the currently opened project ID across sessions
 // (separate from DB so the UI can re-open the last project on app launch)
 
-import { app } from 'electron'
-import { join } from 'node:path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { userDataPath } from './paths'
 
 const FILE = 'current-project.json'
 
-function getPath(): string {
-  const dir = app.getPath('userData')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return join(dir, FILE)
-}
-
 export const currentProjectStore = {
   get(): string | null {
-    const p = getPath()
+    const p = userDataPath(FILE)
     if (!existsSync(p)) return null
     try {
       const data = JSON.parse(readFileSync(p, 'utf-8'))
@@ -24,7 +17,14 @@ export const currentProjectStore = {
       return null
     }
   },
-  set(id: string | null): void {
-    writeFileSync(getPath(), JSON.stringify({ id }), 'utf-8')
+  set(id: string): void {
+    writeFileSync(userDataPath(FILE), JSON.stringify({ id }), 'utf-8')
+  },
+  clear(): void {
+    try {
+      writeFileSync(userDataPath(FILE), JSON.stringify({ id: null }), 'utf-8')
+    } catch {
+      // best-effort
+    }
   }
 }

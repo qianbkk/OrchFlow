@@ -6,9 +6,14 @@ import { TasksView } from './views/TasksView'
 import { AuditView } from './views/AuditView'
 import { SettingsView } from './views/SettingsView'
 import { ApprovalCenter } from './components/ApprovalCenter'
-import { useUiStore } from './stores/ui.store'
+import { useUiStore, type ViewKey } from './stores/ui.store'
 
-type ViewKey = 'sessions' | 'tasks' | 'audit' | 'settings'
+const VIEWS: Record<ViewKey, React.ComponentType> = {
+  sessions: SessionsView,
+  tasks: TasksView,
+  audit: AuditView,
+  settings: SettingsView
+}
 
 function App(): React.JSX.Element {
   const activeView = useUiStore((s) => s.activeView)
@@ -24,27 +29,16 @@ function App(): React.JSX.Element {
       })
   }, [])
 
-  const renderView = (): React.JSX.Element => {
-    switch (activeView as ViewKey) {
-      case 'sessions':
-        return <SessionsView />
-      case 'tasks':
-        return <TasksView />
-      case 'audit':
-        return <AuditView />
-      case 'settings':
-        return <SettingsView />
-      default:
-        return <SessionsView />
-    }
-  }
+  const Active = VIEWS[activeView] ?? SessionsView
 
   return (
     <div className="flex h-full flex-col">
       <TitleBar appName={appInfo?.name ?? 'OrchFlow'} appVersion={appInfo?.version} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar active={activeView} onChange={(v) => setActiveView(v)} />
-        <main className="flex-1 overflow-hidden bg-[var(--color-bg-1)]">{renderView()}</main>
+        <main className="flex-1 overflow-hidden bg-[var(--color-bg-1)]">
+          <Active />
+        </main>
       </div>
       <ApprovalCenter />
     </div>

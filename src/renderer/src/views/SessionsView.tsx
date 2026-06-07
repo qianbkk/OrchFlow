@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Circle, Loader2, Pause, CheckCircle2, XCircle, Play } from 'lucide-react'
 import type { DetectedAgent, Session, SessionStatus } from '@shared/types'
 import { TerminalPane } from '../components/TerminalPane'
 import { useSessionsStore } from '../stores/sessions.store'
+import { useRefreshOn } from '../hooks/useRefreshOn'
 
 const STATUS_ICON: Record<SessionStatus, React.ComponentType<{ size?: number; className?: string }>> = {
   idle: Circle,
@@ -41,7 +42,6 @@ export function SessionsView(): React.JSX.Element {
   const select = useSessionsStore((s) => s.select)
   const selectedId = useSessionsStore((s) => s.selectedId)
   const loadAll = useSessionsStore((s) => s.loadAll)
-  const applyEvent = useSessionsStore((s) => s.applyEvent)
   const sessionList = useMemo(() => Object.values(byId), [byId])
   const selected = selectedId ? byId[selectedId] : sessionList[0]
 
@@ -62,18 +62,7 @@ export function SessionsView(): React.JSX.Element {
   }, [loadAll, select])
 
   // Subscribe to live events
-  useEffect(() => {
-    const offOutput = window.orchflow.on('session:output', (payload) => {
-      applyEvent(payload as never)
-    })
-    const offStatus = window.orchflow.on('session:status', (payload) => {
-      applyEvent(payload as never)
-    })
-    return () => {
-      offOutput()
-      offStatus()
-    }
-  }, [applyEvent])
+  useRefreshOn(['session:output', 'session:status'], () => {})
 
   return (
     <div className="flex h-full flex-col">
@@ -211,33 +200,34 @@ export function SessionsView(): React.JSX.Element {
 function SessionOutput({ sessionId }: { sessionId: string }): React.JSX.Element {
   const byId = useSessionsStore((s) => s.byId)
   const log = byId[sessionId]
-  const [api, setApi] = useState<{
+  const apiRef = useRef<{
     write: (d: string) => void
     writeln: (d: string) => void
     clear: () => void
   } | null>(null)
+  const renderedLenRef = useRef(0)
 
   // Replay buffered lines into xterm when log changes
   useEffect(() => {
+    const api = apiRef.current
     if (!api || !log) return
-    const currentLength = (api as unknown as { _renderedLen?: number })._renderedLen ?? 0
-    if (log.lines.length > currentLength) {
-      for (let i = currentLength; i < log.lines.length; i++) {
+    if (log.lines.length > renderedLenRef.current) {
+      for (let i = renderedLenRef.current; i < log.lines.length; i++) {
         api.writeln(log.lines[i])
       }
-      ;(api as unknown as { _renderedLen?: number })._renderedLen = log.lines.length
+      renderedLenRef.current = log.lines.length
     }
-  }, [log?.lines.length, api, log])
+  }, [log?.lines.length, log])
 
   return (
     <TerminalPane
       onReady={(a) => {
-        api?.clear()
-        setApi(a)
-        ;(a as unknown as { _renderedLen?: number })._renderedLen = 0
+        a.clear()
+        apiRef.current = a
+        renderedLenRef.current = 0
         if (log) {
           for (const line of log.lines) a.writeln(line)
-          ;(a as unknown as { _renderedLen?: number })._renderedLen = log.lines.length
+          renderedLenRef.current = log.lines.length
         }
       }}
     />

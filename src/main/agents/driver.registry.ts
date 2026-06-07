@@ -2,24 +2,24 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
-import { app } from 'electron'
 import { AGENT_DEFAULTS } from '@shared/constants'
 import type { AgentType, DetectedAgent } from '@shared/types'
 import { ClaudeCodeDriver } from './claude-code.driver'
+import { StubDriver } from './stub.driver'
 import type { IAgentDriver } from './driver.interface'
 
 const execFileP = promisify(execFile)
 
-// Order matters: P0 claude first, then codex, then copilot
+// Order matters: P0 claude first, then codex (P1), then copilot (P2)
 const drivers: Map<AgentType, IAgentDriver> = new Map()
 let initialized = false
 
 function registerDefaults(): void {
   if (initialized) return
   drivers.set('claude', new ClaudeCodeDriver())
-  // codex, copilot are Phase 1/2 — register stubs to enable UI flow
-  drivers.set('codex', new ClaudeCodeDriver()) // TODO: replace with real CodexDriver in Phase 1
-  drivers.set('copilot', new ClaudeCodeDriver()) // TODO: replace with real CopilotDriver in Phase 2
+  // Phase 1+ — explicit stubs that surface "not implemented" via an error event
+  drivers.set('codex', new StubDriver('codex', 'Phase 1'))
+  drivers.set('copilot', new StubDriver('copilot', 'Phase 2'))
   initialized = true
 }
 
@@ -55,49 +55,35 @@ async function probeVersion(bin: string): Promise<string | undefined> {
   }
 }
 
-export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
-  const results: DetectedAgent[] = []
-  for (const type of ['claude', 'codex', 'copilot'] as AgentType[]) {
-    const def = AGENT_DEFAULTS[type]
-    let installed = false
-    let resolvedPath: string | undefined
-    // 1. Check npm global bin first (preferred)
-    try {
-      const globalRoot = join(app.getPath('userData'), '..')
-      const candidates = [
-        join(process.env.APPDATA ?? globalRoot, 'npm', `${def.cliBinary}.cmd`),
-        join(process.env.LOCALAPPDATA ?? globalRoot, 'npm', `${def.cliBinary}.cmd`),
-        join(process.env.APPDATA ?? globalRoot, 'npm', `${def.cliBinary}`),
-        join(process.env.LOCALAPPDATA ?? globalRoot, 'npm', `${def.cliBinary}`)
-      ]
-      for (const p of candidates) {
-        if (existsSync(p)) {
-          installed = true
-          resolvedPath = p
-          break
-        }
-      }
-      // 2. PATH fallback
-      if (!installed) {
-        const path = process.env.PATH ?? ''
-        const sep = process.platform === 'win32' ? ';' : ':'
-        for (const dir of path.split(sep)) {
-          for (const ext of def.detect) {
-            const p = join(dir, ext)
-            if (existsSync(p)) {
-              installed = true
-              resolvedPath = p
-              break
-            }
-          }
-          if (installed) break
-        }
-      }
-    } catch {
-      // ignore detection errors
+function findNpmGlobalBinary(bin: string): string | undefined {
+  for (const root of [process.env.APPDATA, process.env.LOCALAPPDATA]) {
+    if (!root) continue
+    for (const ext of ['', '.cmd']) {
+      const p = join(root, 'npm', `${bin}${ext}`)
+      if (existsSync(p)) return p
     }
-    const version = installed ? await probeVersion(resolvedPath ?? def.cliBinary) : undefined
-    results.push({ type, installed, path: resolvedPath, version })
   }
-  return results
+  return undefined
+}
+
+function findOnPath(_bin: string, exts: string[]): string | undefined {
+  const sep = process.platform === 'win32' ? ';' : ':'
+  for (const dir of (process.env.PATH ?? '').split(sep)) {
+    for (const e of exts) {
+      const p = join(dir, e)
+      if (existsSync(p)) return p
+    }
+  }
+  return undefined
+}
+
+export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
+  const probes = (['claude', 'codex', 'copilot'] as AgentType[]).map(async (type): Promise<DetectedAgent> => {
+    const def = AGENT_DEFAULTS[type]
+    const resolvedPath = findNpmGlobalBinary(def.cliBinary) ?? findOnPath(def.cliBinary, def.detect)
+    const installed = !!resolvedPath
+    const version = installed ? await probeVersion(resolvedPath) : undefined
+    return { type, installed, path: resolvedPath, version }
+  })
+  return Promise.all(probes)
 }

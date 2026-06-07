@@ -1,9 +1,8 @@
 // Lightweight settings store — file-backed JSON in userData/settings.json
 // API keys are NOT stored here (those go through keytar in IPC layer)
 
-import { app } from 'electron'
-import { join } from 'node:path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { userDataPath } from './paths'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -16,15 +15,9 @@ const defaultSettings = (): Settings => ({ agents: {}, global: {} })
 
 let cache: Settings | null = null
 
-function getPath(): string {
-  const dir = app.getPath('userData')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return join(dir, SETTINGS_FILE)
-}
-
 function load(): Settings {
   if (cache) return cache
-  const p = getPath()
+  const p = userDataPath(SETTINGS_FILE)
   if (!existsSync(p)) {
     cache = defaultSettings()
     return cache
@@ -40,13 +33,12 @@ function load(): Settings {
 
 function persist(): void {
   if (!cache) return
-  writeFileSync(getPath(), JSON.stringify(cache, null, 2), 'utf-8')
+  writeFileSync(userDataPath(SETTINGS_FILE), JSON.stringify(cache, null, 2), 'utf-8')
 }
 
 export const settingsStore = {
   get(key: string): unknown {
-    const s = load()
-    return s.global[key]
+    return load().global[key]
   },
   set(key: string, value: unknown): void {
     const s = load()
@@ -54,8 +46,7 @@ export const settingsStore = {
     persist()
   },
   getAgentConfig(agentType: string): Record<string, unknown> | null {
-    const s = load()
-    return s.agents[agentType] ?? null
+    return load().agents[agentType] ?? null
   },
   setAgentConfig(agentType: string, config: Record<string, unknown>): Record<string, unknown> {
     const s = load()

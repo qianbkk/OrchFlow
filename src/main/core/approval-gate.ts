@@ -1,35 +1,46 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow } from 'electron'
 import { HIGH_RISK_TOOL_PATTERNS } from '@shared/constants'
 import type { ApprovalRequest, RiskLevel, ToolCall } from '@shared/types'
+import { broadcast } from './broadcast'
 import { notifier } from './notifier'
 
 const queue: ApprovalRequest[] = []
 const pending = new Map<string, { resolve: (approved: boolean) => void; timer: NodeJS.Timeout | null }>()
 
+const TYPE_RISK: Record<ToolCall['type'], RiskLevel> = {
+  file_delete: 'high',
+  file_read: 'low',
+  file_write: 'low',
+  shell: 'medium',
+  install_deps: 'medium',
+  git_push: 'medium',
+  git_force_push: 'high',
+  db_destructive: 'high',
+  merge: 'medium',
+  other: 'medium'
+}
+
 function assessRisk(toolCall: ToolCall): RiskLevel {
-  // High-risk pattern match wins
+  const haystack = [toolCall.description, toolCall.detail].filter(Boolean).join('\n')
   for (const rule of HIGH_RISK_TOOL_PATTERNS) {
-    if (rule.pattern.test(toolCall.description) || (toolCall.detail && rule.pattern.test(toolCall.detail))) {
-      return rule.risk
-    }
+    if (rule.pattern.test(haystack)) return rule.risk
   }
-  // Default by tool type
-  switch (toolCall.type) {
-    case 'file_delete':
-    case 'git_force_push':
-    case 'db_destructive':
-      return 'high'
-    case 'shell':
-    case 'install_deps':
-    case 'merge':
-      return 'medium'
-    case 'file_write':
-    case 'file_read':
-      return 'low'
-    default:
-      return 'medium'
-  }
+  return TYPE_RISK[toolCall.type]
+}
+
+function resolve(requestId: string, decision: 'approved' | 'rejected'): boolean {
+  const req = queue.find((r) => r.id === requestId)
+  const entry = pending.get(requestId)
+  if (!req || !entry) return false
+  req.status = decision
+  req.resolvedAt = Date.now()
+  if (entry.timer) clearTimeout(entry.timer)
+  entry.resolve(decision === 'approved')
+  pending.delete(requestId)
+  const idx = queue.indexOf(req)
+  if (idx >= 0) queue.splice(idx, 1)
+  broadcast('approval:resolved', req)
+  return true
 }
 
 export const approvalGate = {
@@ -45,16 +56,7 @@ export const approvalGate = {
       status: 'pending'
     }
     queue.push(request)
-
-    // Notify all open renderer windows
-    for (const w of BrowserWindow.getAllWindows()) {
-      try {
-        w.webContents.send('approval:request', request)
-      } catch (err) {
-        console.error('[approval-gate] send failed:', err)
-      }
-    }
-
+    broadcast('approval:request', request)
     notifier.notify({
       type: 'approval_required',
       title: `${riskLevel.toUpperCase()} risk action pending`,
@@ -63,62 +65,21 @@ export const approvalGate = {
       taskId
     })
 
-    return new Promise<boolean>((resolve) => {
+    return new Promise<boolean>((resolveFn) => {
       const timer = setTimeout(() => {
         // Default deny after 5 minutes
         request.status = 'rejected'
         const idx = queue.indexOf(request)
         if (idx >= 0) queue.splice(idx, 1)
         pending.delete(request.id)
-        resolve(false)
+        resolveFn(false)
       }, 5 * 60 * 1000)
-      pending.set(request.id, { resolve, timer })
+      pending.set(request.id, { resolve: resolveFn, timer })
     })
   },
 
-  approve(requestId: string): boolean {
-    const req = queue.find((r) => r.id === requestId)
-    const entry = pending.get(requestId)
-    if (!req || !entry) return false
-    req.status = 'approved'
-    req.resolvedAt = Date.now()
-    if (entry.timer) clearTimeout(entry.timer)
-    entry.resolve(true)
-    pending.delete(requestId)
-    const idx = queue.indexOf(req)
-    if (idx >= 0) queue.splice(idx, 1)
-
-    for (const w of BrowserWindow.getAllWindows()) {
-      try {
-        w.webContents.send('approval:resolved', req)
-      } catch (err) {
-        console.error('[approval-gate] notify failed:', err)
-      }
-    }
-    return true
-  },
-
-  reject(requestId: string): boolean {
-    const req = queue.find((r) => r.id === requestId)
-    const entry = pending.get(requestId)
-    if (!req || !entry) return false
-    req.status = 'rejected'
-    req.resolvedAt = Date.now()
-    if (entry.timer) clearTimeout(entry.timer)
-    entry.resolve(false)
-    pending.delete(requestId)
-    const idx = queue.indexOf(req)
-    if (idx >= 0) queue.splice(idx, 1)
-
-    for (const w of BrowserWindow.getAllWindows()) {
-      try {
-        w.webContents.send('approval:resolved', req)
-      } catch (err) {
-        console.error('[approval-gate] notify failed:', err)
-      }
-    }
-    return true
-  },
+  approve: (requestId: string): boolean => resolve(requestId, 'approved'),
+  reject: (requestId: string): boolean => resolve(requestId, 'rejected'),
 
   list(): ApprovalRequest[] {
     return [...queue]

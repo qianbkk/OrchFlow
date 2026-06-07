@@ -1,4 +1,3 @@
-import { BrowserWindow } from 'electron'
 import type { AgentEvent, Checkpoint, Session, SessionConfig } from '@shared/types'
 import { SessionRepository } from '../db/repositories/session.repository'
 import { TaskRepository } from '../db/repositories/task.repository'
@@ -7,19 +6,14 @@ import { getDriver } from '../agents/driver.registry'
 import { approvalGate } from './approval-gate'
 import { checkpointManager } from './checkpoint'
 import { notifier } from './notifier'
+import { broadcast } from './broadcast'
 
 const sessions = new SessionRepository()
 const audit = new AuditRepository()
 
-function pushEventToRenderers(event: AgentEvent): void {
+function pushEvent(event: AgentEvent): void {
   const channel = event.type === 'status_change' ? 'session:status' : 'session:output'
-  for (const w of BrowserWindow.getAllWindows()) {
-    try {
-      w.webContents.send(channel, event)
-    } catch (err) {
-      console.error('[session-manager] send failed:', err)
-    }
-  }
+  broadcast(channel, event)
 }
 
 export const sessionManager = {
@@ -52,7 +46,7 @@ export const sessionManager = {
         riskLevel: event.type === 'tool_call' ? 'medium' : 'low',
         approvalStatus: 'auto'
       })
-      pushEventToRenderers(event)
+      pushEvent(event)
     })
 
     audit.log({
@@ -113,13 +107,7 @@ export const sessionManager = {
     const task = new TaskRepository().get(s.taskId)
     if (!task?.worktreePath) throw new Error('Cannot checkpoint: task has no worktree')
     const cp = await checkpointManager.create(sessionId, s.taskId, task.worktreePath, 'manual', description)
-    for (const w of BrowserWindow.getAllWindows()) {
-      try {
-        w.webContents.send('checkpoint:created', cp)
-      } catch (err) {
-        console.error('[session-manager] notify checkpoint failed:', err)
-      }
-    }
+    broadcast('checkpoint:created', cp)
     return cp
   },
 
