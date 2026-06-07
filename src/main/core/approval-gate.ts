@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import { HIGH_RISK_TOOL_PATTERNS } from '@shared/constants'
 import type { ApprovalRequest, RiskLevel, ToolCall } from '@shared/types'
+import { notifier } from './notifier'
 
 const queue: ApprovalRequest[] = []
 const pending = new Map<string, { resolve: (approved: boolean) => void; timer: NodeJS.Timeout | null }>()
@@ -53,6 +54,14 @@ export const approvalGate = {
         console.error('[approval-gate] send failed:', err)
       }
     }
+
+    notifier.notify({
+      type: 'approval_required',
+      title: `${riskLevel.toUpperCase()} risk action pending`,
+      body: toolCall.description.slice(0, 100),
+      sessionId,
+      taskId
+    })
 
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {

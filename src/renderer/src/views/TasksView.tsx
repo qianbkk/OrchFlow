@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Plus, FolderOpen } from 'lucide-react'
+import { Plus, FolderOpen, GitMerge } from 'lucide-react'
 import type { Project, Task } from '@shared/types'
 import { TaskCreateDialog } from '../components/TaskCreateDialog'
+import { DiffViewer } from '../components/DiffViewer'
 
 export function TasksView(): React.JSX.Element {
   const [project, setProject] = useState<Project | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [openProjectDialog, setOpenProjectDialog] = useState(false)
+  const [diffTask, setDiffTask] = useState<Task | null>(null)
 
   const reload = async (): Promise<void> => {
     try {
@@ -44,11 +47,20 @@ export function TasksView(): React.JSX.Element {
             Open a git repository to start creating tasks.
           </p>
           <button
-            onClick={() => window.alert('Open project dialog not yet implemented in this MVP view')}
+            onClick={() => setOpenProjectDialog(true)}
             className="rounded bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
             Open Project
           </button>
+          {openProjectDialog && (
+            <ProjectPicker
+              onClose={() => setOpenProjectDialog(false)}
+              onPicked={async () => {
+                setOpenProjectDialog(false)
+                await reload()
+              }}
+            />
+          )}
         </div>
       </div>
     )
@@ -104,9 +116,19 @@ export function TasksView(): React.JSX.Element {
                     {t.description}
                   </p>
                 )}
-                <div className="mt-2 text-xs text-[var(--color-text-2)]">
-                  {t.agentType ? `${t.agentType} · ` : 'auto · '}
-                  {t.mode} · {new Date(t.createdAt).toLocaleString()}
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-xs text-[var(--color-text-2)]">
+                    {t.agentType ?? 'auto'} · {t.mode} · {new Date(t.createdAt).toLocaleString()}
+                  </span>
+                  {t.worktreePath && (
+                    <button
+                      onClick={() => setDiffTask(t)}
+                      className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)]"
+                    >
+                      <GitMerge size={12} />
+                      Review / Merge
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
@@ -124,6 +146,83 @@ export function TasksView(): React.JSX.Element {
           }}
         />
       )}
+      {diffTask && (
+        <DiffViewer
+          task={diffTask}
+          onClose={() => setDiffTask(null)}
+          onMerged={() => void reload()}
+          onDiscarded={() => void reload()}
+        />
+      )}
+    </div>
+  )
+}
+
+interface ProjectPickerProps {
+  onClose: () => void
+  onPicked: () => void
+}
+
+function ProjectPicker({ onClose, onPicked }: ProjectPickerProps): React.JSX.Element {
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (): Promise<void> => {
+    if (!path.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.orchflow.projects.open(path.trim())
+      onPicked()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-[var(--color-border-1)] bg-[var(--color-bg-1)] p-6 shadow-2xl">
+        <h3 className="mb-2 font-semibold">Open Project</h3>
+        <p className="mb-3 text-sm text-[var(--color-text-1)]">
+          Enter the absolute path to a git repository on your machine.
+        </p>
+        <input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="C:\Users\you\projects\my-app"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submit()
+          }}
+          className="mb-2 w-full rounded border border-[var(--color-border-1)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
+        />
+        {error && (
+          <p className="mb-2 text-sm text-[var(--color-danger)]">{error}</p>
+        )}
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded px-3 py-1.5 text-sm text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)]"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || !path.trim()}
+            className="rounded bg-[var(--color-accent)] px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {busy ? 'Opening…' : 'Open'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { AuditRepository } from '../db/repositories/audit.repository'
 import { getDriver } from '../agents/driver.registry'
 import { approvalGate } from './approval-gate'
 import { checkpointManager } from './checkpoint'
+import { notifier } from './notifier'
 
 const sessions = new SessionRepository()
 const audit = new AuditRepository()
@@ -31,6 +32,13 @@ export const sessionManager = {
         sessions.updateStatus(session.id, event.status, session.pid)
         if (event.status === 'done' || event.status === 'error') {
           sessions.end(session.id)
+          notifier.notify({
+            type: event.status === 'done' ? 'task_done' : 'task_failed',
+            title: event.status === 'done' ? 'Task complete' : 'Task failed',
+            body: `${session.agentType} session ${session.id.slice(0, 8)} ${event.status}`,
+            taskId: session.taskId,
+            sessionId: session.id
+          })
         }
       }
       audit.log({

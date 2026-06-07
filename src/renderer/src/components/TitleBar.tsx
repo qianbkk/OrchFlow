@@ -1,4 +1,5 @@
-import { Settings as SettingsIcon, Bell } from 'lucide-react'
+import { Settings as SettingsIcon, FolderOpen } from 'lucide-react'
+import { NotificationCenter } from './NotificationCenter'
 import { useUiStore } from '../stores/ui.store'
 
 interface TitleBarProps {
@@ -18,19 +19,23 @@ export function TitleBar({ appName, appVersion }: TitleBarProps): React.JSX.Elem
         <h1 className="text-sm font-semibold tracking-wide">{appName}</h1>
         {appVersion && <span className="text-xs text-[var(--color-text-2)]">v{appVersion}</span>}
       </div>
-      <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div
+        className="flex items-center gap-2"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <button
-          onClick={() => setActiveView('settings')}
-          className="rounded p-1.5 text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-0)]"
-          title="设置"
-          aria-label="Settings"
+          onClick={() => setActiveView('tasks')}
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-0)]"
+          title="Open project"
         >
-          <Bell size={16} />
+          <FolderOpen size={14} />
+          Project
         </button>
+        <NotificationCenter />
         <button
           onClick={() => setActiveView('settings')}
           className="rounded p-1.5 text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-0)]"
-          title="设置"
+          title="Settings"
           aria-label="Open settings"
         >
           <SettingsIcon size={16} />

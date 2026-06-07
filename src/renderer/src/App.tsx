@@ -5,6 +5,7 @@ import { SessionsView } from './views/SessionsView'
 import { TasksView } from './views/TasksView'
 import { AuditView } from './views/AuditView'
 import { SettingsView } from './views/SettingsView'
+import { ApprovalCenter } from './components/ApprovalCenter'
 import { useUiStore } from './stores/ui.store'
 
 type ViewKey = 'sessions' | 'tasks' | 'audit' | 'settings'
@@ -45,6 +46,7 @@ function App(): React.JSX.Element {
         <Sidebar active={activeView} onChange={(v) => setActiveView(v)} />
         <main className="flex-1 overflow-hidden bg-[var(--color-bg-1)]">{renderView()}</main>
       </div>
+      <ApprovalCenter />
     </div>
   )
 }
