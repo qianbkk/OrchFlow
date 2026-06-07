@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bell, X, XCircle, CheckCircle2, AlertTriangle, Info } from 'lucide-react'
 import type { Notification, NotificationType } from '@shared/types'
+import { useUiStore } from '../stores/ui.store'
+import { useSessionsStore } from '../stores/sessions.store'
 
 const TYPE_ICON: Record<NotificationType, React.ComponentType<{ size?: number; className?: string }>> = {
   task_done: CheckCircle2,
@@ -99,16 +101,10 @@ export function NotificationCenter(): React.JSX.Element {
                       if (!n.read) void markRead(n.id)
                       // PRD §3.7: click notification → navigate to session/task
                       if (n.sessionId) {
-                        import('../stores/ui.store').then((m) => {
-                          m.useUiStore.getState().setActiveView('sessions')
-                        })
-                        import('../stores/sessions.store').then((m) => {
-                          m.useSessionsStore.getState().select(n.sessionId as string)
-                        })
+                        useUiStore.getState().setActiveView('sessions')
+                        useSessionsStore.getState().select(n.sessionId)
                       } else if (n.taskId) {
-                        import('../stores/ui.store').then((m) => {
-                          m.useUiStore.getState().setActiveView('tasks')
-                        })
+                        useUiStore.getState().setActiveView('tasks')
                       }
                     }}
                     className={`flex cursor-pointer items-start gap-2 border-b border-[var(--color-border-1)]/50 p-3 hover:bg-[var(--color-bg-2)] ${

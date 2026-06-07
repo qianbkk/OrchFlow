@@ -82,13 +82,21 @@ export function TerminalPane({
       onDataRef.current?.(data)
     })
 
-    // Initial fit
-    try {
-      fit.fit()
-      onResizeRef.current?.(term.cols, term.rows)
-    } catch (err) {
-      console.warn('[TerminalPane] initial fit failed:', err)
+    // Helper: fit the terminal to its container and notify the parent of
+    // the new (cols, rows). Centralizes the try/catch that appears in
+    // initial fit, window resize, resizeKey change, and fullscreen toggle.
+    const refit = (): void => {
+      try {
+        fit.fit()
+        onResizeRef.current?.(term.cols, term.rows)
+      } catch (err) {
+        // xterm throws if the container has zero size (e.g. during layout);
+        // safe to ignore — a subsequent fit will succeed.
+        void err
+      }
     }
+
+    refit()
 
     termRef.current = term
     fitRef.current = fit
@@ -101,20 +109,12 @@ export function TerminalPane({
       })
     }
 
-    const handleResize = (): void => {
-      try {
-        fit.fit()
-        onResizeRef.current?.(term.cols, term.rows)
-      } catch (err) {
-        void err
-      }
-    }
-    window.addEventListener('resize', handleResize)
-    const ro = new ResizeObserver(handleResize)
+    window.addEventListener('resize', refit)
+    const ro = new ResizeObserver(refit)
     ro.observe(containerRef.current)
 
     return () => {
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', refit)
       ro.disconnect()
       term.dispose()
       termRef.current = null

@@ -45,11 +45,16 @@ function App(): React.JSX.Element {
     })
     // PRD §3.7: click a Windows notification or in-app notification
     // → focus the window + navigate to the related Session or Task.
+    // Validate the target exists before navigating so the UI doesn't land
+    // on a "selected but nothing shown" state.
     const off2 = window.orchflow.on('notification:navigate', (payload: unknown) => {
       const p = payload as { sessionId?: string; taskId?: string }
       if (p.sessionId) {
-        setActiveView('sessions')
-        useSessionsStore.getState().select(p.sessionId)
+        const store = useSessionsStore.getState()
+        if (store.byId[p.sessionId]) {
+          setActiveView('sessions')
+          store.select(p.sessionId)
+        }
       } else if (p.taskId) {
         setActiveView('tasks')
       }

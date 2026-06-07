@@ -81,7 +81,9 @@ export function SessionsView(): React.JSX.Element {
   useRefreshOn(['session:output', 'session:status'], () => {})
 
   // PRD §3.5.2: Esc exits fullscreen (keyboard affordance for the fullscreen
-  // overlay, since it feels modal to the user).
+  // overlay, since it feels modal to the user). Also auto-exits fullscreen
+  // when the session enters waiting_approval — security-critical approval
+  // dialogs must not be obscured by the terminal overlay.
   useEffect(() => {
     if (!fullscreenId) return
     const handler = (e: KeyboardEvent): void => {
@@ -91,11 +93,22 @@ export function SessionsView(): React.JSX.Element {
     return () => window.removeEventListener('keydown', handler)
   }, [fullscreenId])
 
+  useEffect(() => {
+    if (fullscreenId && selected?.status === 'waiting_approval') {
+      setFullscreenId(null)
+    }
+  }, [fullscreenId, selected?.status])
+
   const toggleMode = async (): Promise<void> => {
     if (!selected) return
     const nextMode: SessionMode = selectedMode === 'headless' ? 'interactive' : 'headless'
-    await window.orchflow.sessions.setMode(selected.sessionId, nextMode)
-    useSessionsStore.getState().setMode(selected.sessionId, nextMode)
+    try {
+      await window.orchflow.sessions.setMode(selected.sessionId, nextMode)
+      useSessionsStore.getState().setMode(selected.sessionId, nextMode)
+    } catch (err) {
+      console.error('[SessionsView] setMode failed:', err)
+      // UI stays in current mode; user can retry.
+    }
   }
 
   return (

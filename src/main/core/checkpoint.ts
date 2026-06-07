@@ -103,6 +103,19 @@ export const checkpointManager = {
       // `git diff <cpCommit>..HEAD` shows what would be undone by rollback
       const stat = await git.raw(['diff', '--numstat', `${cp.gitCommit}..HEAD`]).catch(() => '')
       const fullDiff = await git.raw(['diff', `${cp.gitCommit}..HEAD`]).catch(() => '')
+
+      // Split-based parsing handles both quoted paths (spaces, Unicode) and
+      // the last file (which has no subsequent `diff --git` sentinel). The
+      // previous regex approach with the `m` flag truncated the last file.
+      const sectionMap = new Map<string, string>()
+      const sections = fullDiff.split(/(?=^diff --git )/m)
+      for (const section of sections) {
+        if (!section.startsWith('diff --git')) continue
+        // Match header: `diff --git "a/path" "b/path"` OR `diff --git a/path b/path`
+        const headerMatch = section.match(/^diff --git "?a\/(.+?)"? "?b\/(.+?)"?\s*$/m)
+        if (headerMatch) sectionMap.set(headerMatch[1], section)
+      }
+
       const fileStats = stat
         .split('\n')
         .filter((l) => l.trim())
@@ -111,10 +124,7 @@ export const checkpointManager = {
           return { path, additions: parseInt(add ?? '0', 10) || 0, deletions: parseInt(del ?? '0', 10) || 0 }
         })
       for (const fs of fileStats) {
-        // Parse per-file diff by extracting the hunk between @@ markers
-        const fileRegex = new RegExp(`diff --git a/${escapeRegex(fs.path)} b/${escapeRegex(fs.path)}[\\s\\S]*?(?=^diff --git |$)`, 'm')
-        const match = fileRegex.exec(fullDiff)
-        const fileDiff = match ? match[0] : ''
+        const fileDiff = sectionMap.get(fs.path) ?? ''
         files.push({
           path: fs.path,
           status: fs.additions > 0 && fs.deletions === 0 ? 'added' : fs.deletions > 0 && fs.additions === 0 ? 'deleted' : 'modified',
@@ -131,8 +141,4 @@ export const checkpointManager = {
     }
     return { worktreePath: task.worktreePath, files, summary }
   }
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

@@ -100,14 +100,16 @@ export function CheckpointTimeline({ sessionId }: CheckpointTimelineProps): Reac
                     <>
                       <button
                         onClick={() => setPreviewCp(cp)}
-                        className="flex items-center gap-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-0)] px-2 py-1 text-xs hover:bg-[var(--color-bg-3)]"
+                        disabled={busy}
+                        className="flex items-center gap-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-0)] px-2 py-1 text-xs hover:bg-[var(--color-bg-3)] disabled:opacity-50 disabled:pointer-events-none"
                         title="Preview rollback diff"
                       >
                         <Eye size={10} /> Preview
                       </button>
                       <button
                         onClick={() => setRollbackCp(cp)}
-                        className="flex items-center gap-1 rounded border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2 py-1 text-xs text-[var(--color-warn)] hover:bg-[var(--color-warn)]/20"
+                        disabled={busy}
+                        className="flex items-center gap-1 rounded border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 px-2 py-1 text-xs text-[var(--color-warn)] hover:bg-[var(--color-warn)]/20 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         <RotateCcw size={10} /> Rollback
                       </button>

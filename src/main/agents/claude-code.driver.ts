@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
+import { BrowserWindow } from 'electron'
 import type { AgentEvent, Session, SessionConfig, SessionMode, SessionStatus, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
 import { getAgentBinaryPath } from './driver.registry'
 import { approvalGate } from '../core/approval-gate'
 import { settingsStore } from '../core/settings-store'
-import { broadcast } from '../core/broadcast'
+import { checkpointManager } from '../core/checkpoint'
+import { TaskRepository } from '../db/repositories/task.repository'
 
 /** Env vars forwarded to the spawned CLI — never the whole process.env. */
 const ALLOWED_ENV_KEYS = new Set([
@@ -44,6 +46,20 @@ interface SessionState {
 }
 
 const sessions = new Map<string, SessionState>()
+
+/** Targeted send to the first open window. Avoids broadcasting raw PTY
+ *  data (which can include user keystrokes in interactive mode) to every
+ *  BrowserWindow. Multi-window support would require tracking which window
+ *  owns each session; for Phase 0 single-window this is correct. */
+function sendPtyData(sessionId: string, data: string): void {
+  const wins = BrowserWindow.getAllWindows()
+  if (wins.length === 0) return
+  try {
+    wins[0].webContents.send('pty:data', { sessionId, data })
+  } catch (err) {
+    console.warn('[claude-driver] pty:data send failed:', err)
+  }
+}
 
 function emit(state: SessionState, event: Omit<AgentEvent, 'sessionId'>): void {
   const full: AgentEvent = { ...event, sessionId: state.session.id } as AgentEvent
@@ -119,6 +135,25 @@ function parseStreamJsonLine(state: SessionState, line: string): boolean {
       })
 
       if (needsApproval && toolCall && !state.cancelled) {
+        // PRD §3.4.3: "每次 Approval Gate 确认前自动创建" — snapshot the
+        // worktree before the high-risk operation runs so the user can
+        // always roll back even after approving.
+        if (state.session.taskId) {
+          try {
+            const task = new TaskRepository().get(state.session.taskId)
+            if (task?.worktreePath && existsSync(task.worktreePath)) {
+              void checkpointManager.create(
+                state.session.id,
+                state.session.taskId,
+                task.worktreePath,
+                'pre_approval',
+                `Before ${toolCall.type}: ${toolCall.description.slice(0, 80)}`
+              )
+            }
+          } catch (err) {
+            console.warn('[claude-driver] pre-approval checkpoint failed:', err)
+          }
+        }
         setStatus(state, 'waiting_approval')
         // Fire-and-forget: the result of approval drives the status, not the event emission
         state.pendingApproval = approvalGate
@@ -236,7 +271,9 @@ export class ClaudeCodeDriver implements IAgentDriver {
         // PRD §3.5.2 + §11.3: In Interactive mode, stop parsing stream-json
         // and pipe raw bytes straight to the renderer's xterm.js. The same
         // PTY process is reused — no restart, no lost state.
-        broadcast('pty:data', { sessionId: state.session.id, data })
+        // Use targeted send (not broadcast) to avoid leaking keystrokes
+        // to every open BrowserWindow.
+        sendPtyData(state.session.id, data)
         return
       }
       state.buffer += data
@@ -316,7 +353,7 @@ export class ClaudeCodeDriver implements IAgentDriver {
       // Flush any partial line in the headless buffer so the user sees
       // the last bit of output before the mode switch.
       if (state.buffer) {
-        broadcast('pty:data', { sessionId, data: state.buffer })
+        sendPtyData(sessionId, state.buffer)
         state.buffer = ''
       }
     } else {
