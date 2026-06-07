@@ -7,6 +7,7 @@ export interface SessionLog {
   lines: string[]
   status: Session['status']
   agentType: Session['agentType']
+  mode: Session['mode']
   taskId: string
   updatedAt: number
 }
@@ -17,6 +18,7 @@ interface SessionsState {
   select: (id: string | null) => void
   upsert: (session: Session) => void
   setStatus: (sessionId: string, status: Session['status']) => void
+  setMode: (sessionId: string, mode: Session['mode']) => void
   applyEvent: (event: AgentEvent) => void
   loadAll: (sessions: Session[]) => void
   remove: (sessionId: string) => void
@@ -25,11 +27,18 @@ interface SessionsState {
 const trim = (lines: string[]): string[] =>
   lines.length > COMPACT_PREVIEW_LINES ? lines.slice(-COMPACT_PREVIEW_LINES) : lines
 
-const emptyLog = (s: { id: string; status: Session['status']; agentType: Session['agentType']; taskId: string }): SessionLog => ({
+const emptyLog = (s: {
+  id: string
+  status: Session['status']
+  agentType: Session['agentType']
+  mode: Session['mode']
+  taskId: string
+}): SessionLog => ({
   sessionId: s.id,
   lines: [],
   status: s.status,
   agentType: s.agentType,
+  mode: s.mode,
   taskId: s.taskId,
   updatedAt: Date.now()
 })
@@ -57,6 +66,12 @@ export const useSessionsStore = create<SessionsState>((set) => ({
         byId: { ...state.byId, [sessionId]: { ...existing, status, updatedAt: Date.now() } }
       }
     }),
+  setMode: (sessionId, mode) =>
+    set((state) => {
+      const existing = state.byId[sessionId]
+      if (!existing) return state
+      return { byId: { ...state.byId, [sessionId]: { ...existing, mode, updatedAt: Date.now() } } }
+    }),
   applyEvent: (event) =>
     set((state) => {
       const existing =
@@ -65,6 +80,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           id: event.sessionId,
           status: 'idle',
           agentType: 'claude',
+          mode: 'headless',
           taskId: event.taskId ?? ''
         })
       const updates: Partial<SessionLog> = { updatedAt: Date.now() }

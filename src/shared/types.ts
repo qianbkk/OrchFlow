@@ -311,6 +311,9 @@ export interface SessionsAPI {
   send(sessionId: string, message: string): Promise<void>
   attachPty(sessionId: string): Promise<void>
   openExternal(sessionId: string): Promise<void>
+  setMode(sessionId: string, mode: SessionMode): Promise<void>
+  ptyInput(sessionId: string, data: string): Promise<void>
+  ptyResize(sessionId: string, cols: number, rows: number): Promise<void>
 }
 
 export interface TasksAPI {

@@ -53,7 +53,13 @@ const api: OrchFlowAPI = {
     send: (sessionId: string, message: string) =>
       ipcRenderer.invoke('sessions:send', sessionId, message) as Promise<void>,
     attachPty: (sessionId: string) => ipcRenderer.invoke('sessions:attachPty', sessionId) as Promise<void>,
-    openExternal: (sessionId: string) => ipcRenderer.invoke('sessions:openExternal', sessionId) as Promise<void>
+    openExternal: (sessionId: string) => ipcRenderer.invoke('sessions:openExternal', sessionId) as Promise<void>,
+    setMode: (sessionId: string, mode: 'headless' | 'interactive') =>
+      ipcRenderer.invoke('sessions:setMode', sessionId, mode) as Promise<void>,
+    ptyInput: (sessionId: string, data: string) =>
+      ipcRenderer.invoke('pty:input', sessionId, data) as Promise<void>,
+    ptyResize: (sessionId: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('pty:resize', sessionId, cols, rows) as Promise<void>
   },
 
   tasks: {

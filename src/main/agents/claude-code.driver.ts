@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
-import type { AgentEvent, Session, SessionConfig, SessionStatus, ToolCall } from '@shared/types'
+import type { AgentEvent, Session, SessionConfig, SessionMode, SessionStatus, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
 import { getAgentBinaryPath } from './driver.registry'
 import { approvalGate } from '../core/approval-gate'
 import { settingsStore } from '../core/settings-store'
+import { broadcast } from '../core/broadcast'
 
 /** Env vars forwarded to the spawned CLI — never the whole process.env. */
 const ALLOWED_ENV_KEYS = new Set([
@@ -39,6 +40,7 @@ interface SessionState {
   buffer: string
   cancelled: boolean
   pendingApproval: Promise<boolean> | null
+  mode: SessionMode
 }
 
 const sessions = new Map<string, SessionState>()
@@ -194,7 +196,8 @@ export class ClaudeCodeDriver implements IAgentDriver {
       subscribers: new Set(),
       buffer: '',
       cancelled: false,
-      pendingApproval: null
+      pendingApproval: null,
+      mode: 'headless'
     }
     sessions.set(session.id, state)
 
@@ -229,6 +232,13 @@ export class ClaudeCodeDriver implements IAgentDriver {
     setStatus(state, 'running')
 
     ptyProc.onData((data: string) => {
+      if (state.mode === 'interactive') {
+        // PRD §3.5.2 + §11.3: In Interactive mode, stop parsing stream-json
+        // and pipe raw bytes straight to the renderer's xterm.js. The same
+        // PTY process is reused — no restart, no lost state.
+        broadcast('pty:data', { sessionId: state.session.id, data })
+        return
+      }
       state.buffer += data
       const lines = state.buffer.split('\n')
       state.buffer = lines.pop() ?? ''
@@ -293,6 +303,56 @@ export class ClaudeCodeDriver implements IAgentDriver {
     const state = sessions.get(sessionId)
     if (state?.pty) {
       state.pty.write(`${message}\r`)
+    }
+  }
+
+  /** Switch a session between headless (structured stream-json) and interactive
+   *  (raw pty passthrough) modes. The underlying PTY process is NOT restarted
+   *  — only the routing of onData bytes changes (PRD §11.3). */
+  switchMode(sessionId: string, newMode: SessionMode): void {
+    const state = sessions.get(sessionId)
+    if (!state || state.mode === newMode) return
+    if (newMode === 'interactive') {
+      // Flush any partial line in the headless buffer so the user sees
+      // the last bit of output before the mode switch.
+      if (state.buffer) {
+        broadcast('pty:data', { sessionId, data: state.buffer })
+        state.buffer = ''
+      }
+    } else {
+      // Switching back to headless — drop any partial state. Rare path.
+      state.buffer = ''
+    }
+    state.mode = newMode
+    state.session.mode = newMode
+    emit(state, {
+      type: 'status_change',
+      timestamp: Date.now(),
+      content: newMode,
+      taskId: state.session.taskId,
+      status: state.session.status
+    })
+  }
+
+  /** Write raw keystrokes from the renderer's xterm.js to the PTY.
+   *  Used in interactive mode (PRD §3.5.2). */
+  ptyInput(sessionId: string, data: string): void {
+    const state = sessions.get(sessionId)
+    if (state?.pty && state.mode === 'interactive') {
+      state.pty.write(data)
+    }
+  }
+
+  /** Forward renderer-side resize events to the PTY so the agent CLI sees
+   *  the correct COLUMNS/LINES. */
+  ptyResize(sessionId: string, cols: number, rows: number): void {
+    const state = sessions.get(sessionId)
+    if (state?.pty) {
+      try {
+        state.pty.resize(cols, rows)
+      } catch (err) {
+        console.warn('[claude-driver] resize failed:', err)
+      }
     }
   }
 

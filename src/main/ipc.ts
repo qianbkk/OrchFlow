@@ -159,6 +159,15 @@ ipcMain.handle('sessions:send', async (_e, sessionId: string, message: string) =
   sessionManager.send(sessionId, message)
 )
 ipcMain.handle('sessions:attachPty', async (_e, sessionId: string) => sessionManager.attachPty(sessionId))
+ipcMain.handle('sessions:setMode', (_e, sessionId: string, mode: 'headless' | 'interactive') => {
+  sessionManager.setMode(sessionId, mode)
+})
+ipcMain.handle('pty:input', (_e, sessionId: string, data: string) => {
+  sessionManager.ptyInput(sessionId, data)
+})
+ipcMain.handle('pty:resize', (_e, sessionId: string, cols: number, rows: number) => {
+  sessionManager.ptyResize(sessionId, cols, rows)
+})
 ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
   const session = sessions.get(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)

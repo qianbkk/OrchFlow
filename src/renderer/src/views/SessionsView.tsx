@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, Loader2, Pause, CheckCircle2, XCircle, Play, ChevronDown, ChevronRight } from 'lucide-react'
-import type { DetectedAgent, Session, SessionStatus } from '@shared/types'
+import {
+  Circle,
+  Loader2,
+  Pause,
+  CheckCircle2,
+  XCircle,
+  Play,
+  ChevronDown,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  Keyboard,
+  List
+} from 'lucide-react'
+import type { DetectedAgent, Session, SessionMode, SessionStatus } from '@shared/types'
 import { TerminalPane } from '../components/TerminalPane'
 import { useSessionsStore } from '../stores/sessions.store'
 import { useRefreshOn } from '../hooks/useRefreshOn'
@@ -39,12 +52,14 @@ function StatusDot({ status }: { status: SessionStatus }): React.JSX.Element {
 export function SessionsView(): React.JSX.Element {
   const [agents, setAgents] = useState<DetectedAgent[]>([])
   const [loading, setLoading] = useState(true)
+  const [fullscreenId, setFullscreenId] = useState<string | null>(null)
   const byId = useSessionsStore((s) => s.byId)
   const select = useSessionsStore((s) => s.select)
   const selectedId = useSessionsStore((s) => s.selectedId)
   const loadAll = useSessionsStore((s) => s.loadAll)
   const sessionList = useMemo(() => Object.values(byId), [byId])
   const selected = selectedId ? byId[selectedId] : sessionList[0]
+  const selectedMode: SessionMode = selected?.mode ?? 'headless'
 
   useEffect(() => {
     void (async () => {
@@ -64,6 +79,24 @@ export function SessionsView(): React.JSX.Element {
 
   // Subscribe to live events
   useRefreshOn(['session:output', 'session:status'], () => {})
+
+  // PRD §3.5.2: Esc exits fullscreen (keyboard affordance for the fullscreen
+  // overlay, since it feels modal to the user).
+  useEffect(() => {
+    if (!fullscreenId) return
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setFullscreenId(null)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [fullscreenId])
+
+  const toggleMode = async (): Promise<void> => {
+    if (!selected) return
+    const nextMode: SessionMode = selectedMode === 'headless' ? 'interactive' : 'headless'
+    await window.orchflow.sessions.setMode(selected.sessionId, nextMode)
+    useSessionsStore.getState().setMode(selected.sessionId, nextMode)
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -175,18 +208,54 @@ export function SessionsView(): React.JSX.Element {
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  {/* Open External is a PRD Phase 2 feature. Hidden in Phase 0
-                      MVP to keep the UI minimal and avoid an in-app terminal
-                      that synchronizes output via shared log. */}
+                  {/* PRD §3.5.2: mode toggle — switches the driver between
+                      stream-json parsing (headless) and raw pty passthrough
+                      (interactive) without restarting the PTY process. */}
+                  <button
+                    onClick={() => void toggleMode()}
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-[var(--color-bg-3)] ${
+                      selectedMode === 'interactive'
+                        ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
+                        : 'text-[var(--color-text-1)]'
+                    }`}
+                    title={
+                      selectedMode === 'interactive'
+                        ? 'Switch to structured output mode'
+                        : 'Switch to interactive terminal mode'
+                    }
+                  >
+                    {selectedMode === 'interactive' ? <Keyboard size={12} /> : <List size={12} />}
+                    {selectedMode === 'interactive' ? 'Interactive' : 'Structured'}
+                  </button>
+                  {/* PRD §3.5.2: "展开" button — fullscreen xterm view.
+                      Same terminal instance, just repositioned via CSS. */}
+                  <button
+                    onClick={() =>
+                      setFullscreenId(
+                        fullscreenId === selected.sessionId ? null : selected.sessionId
+                      )
+                    }
+                    className="rounded p-1 text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)]"
+                    title={fullscreenId ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}
+                  >
+                    {fullscreenId ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  </button>
                 </div>
               </div>
               <div className="flex-1 overflow-hidden p-2">
-                <SessionOutput sessionId={selected.sessionId} />
+                <SessionOutput
+                  sessionId={selected.sessionId}
+                  mode={selectedMode}
+                  fullscreen={fullscreenId === selected.sessionId}
+                />
               </div>
               {/* PRD §3.4.3: checkpoint timeline (collapsible, below the
                   terminal output). Shows markers for auto/manual/pre_approval
-                  checkpoints with preview + rollback actions. */}
-              <CollapsibleTimeline sessionId={selected.sessionId} />
+                  checkpoints with preview + rollback actions. Hidden when
+                  the terminal is fullscreen. */}
+              {fullscreenId !== selected.sessionId && (
+                <CollapsibleTimeline sessionId={selected.sessionId} />
+              )}
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-text-2)]">
@@ -199,7 +268,13 @@ export function SessionsView(): React.JSX.Element {
   )
 }
 
-function SessionOutput({ sessionId }: { sessionId: string }): React.JSX.Element {
+interface SessionOutputProps {
+  sessionId: string
+  mode: SessionMode
+  fullscreen: boolean
+}
+
+function SessionOutput({ sessionId, mode, fullscreen }: SessionOutputProps): React.JSX.Element {
   const byId = useSessionsStore((s) => s.byId)
   const log = byId[sessionId]
   const apiRef = useRef<{
@@ -209,8 +284,9 @@ function SessionOutput({ sessionId }: { sessionId: string }): React.JSX.Element 
   } | null>(null)
   const renderedLenRef = useRef(0)
 
-  // Replay buffered lines into xterm when log changes
+  // Replay buffered lines into xterm when log changes (headless mode only)
   useEffect(() => {
+    if (mode !== 'headless') return
     const api = apiRef.current
     if (!api || !log) return
     if (log.lines.length > renderedLenRef.current) {
@@ -219,17 +295,41 @@ function SessionOutput({ sessionId }: { sessionId: string }): React.JSX.Element 
       }
       renderedLenRef.current = log.lines.length
     }
-  }, [log?.lines.length, log])
+  }, [log?.lines.length, log, mode])
+
+  // PRD §3.5.2: in interactive mode, subscribe to raw pty:data events
+  // from the main process and write them straight into xterm.
+  useEffect(() => {
+    if (mode !== 'interactive') return
+    const off = window.orchflow.on('pty:data', (payload: unknown) => {
+      const p = payload as { sessionId: string; data: string }
+      if (p.sessionId === sessionId) {
+        apiRef.current?.write(p.data)
+      }
+    })
+    return off
+  }, [mode, sessionId])
 
   return (
     <TerminalPane
+      fullscreen={fullscreen}
       onReady={(a) => {
         a.clear()
         apiRef.current = a
         renderedLenRef.current = 0
-        if (log) {
+        if (mode === 'headless' && log) {
           for (const line of log.lines) a.writeln(line)
           renderedLenRef.current = log.lines.length
+        }
+      }}
+      onData={(data) => {
+        if (mode === 'interactive') {
+          void window.orchflow.sessions.ptyInput(sessionId, data)
+        }
+      }}
+      onResize={(cols, rows) => {
+        if (mode === 'interactive') {
+          void window.orchflow.sessions.ptyResize(sessionId, cols, rows)
         }
       }}
     />

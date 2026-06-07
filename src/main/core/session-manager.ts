@@ -145,6 +145,40 @@ export const sessionManager = {
     s.mode = 'interactive'
   },
 
+  /** PRD §3.5.2: toggle a session between headless (stream-json parsed) and
+   *  interactive (raw pty passthrough to xterm.js). */
+  setMode(sessionId: string, mode: Session['mode']): void {
+    const s = sessions.get(sessionId)
+    if (!s) return
+    const driver = getDriver(s.agentType)
+    // ClaudeCodeDriver has switchMode; stub drivers don't.
+    const claude = driver as unknown as { switchMode?: (id: string, m: Session['mode']) => void }
+    if (claude.switchMode) {
+      claude.switchMode(sessionId, mode)
+    }
+  },
+
+  /** Forward renderer keystrokes to the underlying PTY in interactive mode. */
+  ptyInput(sessionId: string, data: string): void {
+    const s = sessions.get(sessionId)
+    if (!s) return
+    const driver = getDriver(s.agentType)
+    const claude = driver as unknown as { ptyInput?: (id: string, d: string) => void }
+    if (claude.ptyInput) claude.ptyInput(sessionId, data)
+  },
+
+  /** Forward renderer resize to the underlying PTY so the CLI sees correct
+   *  COLUMNS/LINES. */
+  ptyResize(sessionId: string, cols: number, rows: number): void {
+    const s = sessions.get(sessionId)
+    if (!s) return
+    const driver = getDriver(s.agentType)
+    const claude = driver as unknown as {
+      ptyResize?: (id: string, c: number, r: number) => void
+    }
+    if (claude.ptyResize) claude.ptyResize(sessionId, cols, rows)
+  },
+
   async openExternal(_sessionId: string): Promise<void> {
     // Implemented in IPC layer; placeholder
   },

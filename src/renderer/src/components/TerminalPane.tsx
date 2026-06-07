@@ -9,15 +9,35 @@ interface TerminalPaneProps {
   resizeKey?: number
   /** Ref-based input/output hook (consumed by parent for sending lines) */
   onReady?: (api: { write: (data: string) => void; writeln: (data: string) => void; clear: () => void }) => void
+  /** In interactive mode: forward each xterm keystroke to the parent so it
+   *  can be piped back to the PTY via IPC. */
+  onData?: (data: string) => void
+  /** In interactive mode: notify parent when the terminal resizes (so the
+   *  PTY can update COLUMNS/LINES). */
+  onResize?: (cols: number, rows: number) => void
+  /** Whether the terminal is displayed in fullscreen mode (CSS fixed overlay).
+   *  The terminal DOM element stays the same — only its position changes. */
+  fullscreen?: boolean
   className?: string
 }
 
-export function TerminalPane({ resizeKey, onReady, className }: TerminalPaneProps): React.JSX.Element {
+export function TerminalPane({
+  resizeKey,
+  onReady,
+  onData,
+  onResize,
+  fullscreen,
+  className
+}: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onReadyRef = useRef(onReady)
+  const onDataRef = useRef(onData)
+  const onResizeRef = useRef(onResize)
   onReadyRef.current = onReady
+  onDataRef.current = onData
+  onResizeRef.current = onResize
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -57,11 +77,16 @@ export function TerminalPane({ resizeKey, onReady, className }: TerminalPaneProp
     term.loadAddon(webLinks)
     term.open(containerRef.current)
 
+    // Forward keystrokes to parent (used in interactive mode)
+    term.onData((data: string) => {
+      onDataRef.current?.(data)
+    })
+
     // Initial fit
     try {
       fit.fit()
+      onResizeRef.current?.(term.cols, term.rows)
     } catch (err) {
-      // xterm throws if container has 0 size
       console.warn('[TerminalPane] initial fit failed:', err)
     }
 
@@ -76,20 +101,20 @@ export function TerminalPane({ resizeKey, onReady, className }: TerminalPaneProp
       })
     }
 
-    const onResize = (): void => {
+    const handleResize = (): void => {
       try {
         fit.fit()
+        onResizeRef.current?.(term.cols, term.rows)
       } catch (err) {
-        // ignore
         void err
       }
     }
-    window.addEventListener('resize', onResize)
-    const ro = new ResizeObserver(onResize)
+    window.addEventListener('resize', handleResize)
+    const ro = new ResizeObserver(handleResize)
     ro.observe(containerRef.current)
 
     return () => {
-      window.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', handleResize)
       ro.disconnect()
       term.dispose()
       termRef.current = null
@@ -102,11 +127,36 @@ export function TerminalPane({ resizeKey, onReady, className }: TerminalPaneProp
     if (fitRef.current) {
       try {
         fitRef.current.fit()
+        if (termRef.current) onResizeRef.current?.(termRef.current.cols, termRef.current.rows)
       } catch (err) {
         void err
       }
     }
   }, [resizeKey])
 
-  return <div ref={containerRef} className={`h-full w-full overflow-hidden ${className ?? ''}`} />
+  // Re-fit when entering/exiting fullscreen
+  useEffect(() => {
+    if (!fitRef.current) return undefined
+    // Small delay to let CSS transition settle before fitting
+    const t = setTimeout(() => {
+      try {
+        fitRef.current?.fit()
+        if (termRef.current) onResizeRef.current?.(termRef.current.cols, termRef.current.rows)
+      } catch (err) {
+        void err
+      }
+    }, 50)
+    return () => clearTimeout(t)
+  }, [fullscreen])
+
+  return (
+    <div
+      ref={containerRef}
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-40 h-full w-full bg-[#0b1020]'
+          : `h-full w-full overflow-hidden ${className ?? ''}`
+      }
+    />
+  )
 }
