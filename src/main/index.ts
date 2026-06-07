@@ -2,6 +2,8 @@ import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getDb, closeDb } from './db/database'
+import { registerIpcHandlers } from './ipc'
 
 // Block CommonJS __dirname typing issue under ESM-less environment
 const __dirnameSafe = (() => {
@@ -50,6 +52,12 @@ function createWindow(): void {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.orchflow.app')
 
+  // Initialize DB (runs migrations on first launch)
+  getDb()
+
+  // Register all IPC handlers
+  registerIpcHandlers()
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -67,4 +75,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  closeDb()
 })

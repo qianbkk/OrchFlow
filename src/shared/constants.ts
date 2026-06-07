@@ -61,3 +61,9 @@ export const ALLOWED_IPC_CHANNELS = [
   'message-bus:delivered',
   'audit:entry'
 ] as const
+
+// Keytar settings
+export const PROJECT_KEYTAR_SERVICE = 'OrchFlow'
+export const KEYTAR_KEYS = {
+  API_KEY_PREFIX: 'apiKey:'
+} as const
