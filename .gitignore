@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Build outputs
+dist/
+out/
+build/
+release/
+*.tsbuildinfo
+release-app/
+
+# Electron-builder
+dist_electron/
+
+# Vite cache
+.vite/
+.cache/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# TypeScript
+*.tsbuildinfo
+
+# Test artifacts
+playwright-report/
+test-results/
+screenshots/
+
+# App data (user-specific, not in repo)
+.orchflow/
