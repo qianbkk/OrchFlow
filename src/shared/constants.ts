@@ -13,7 +13,13 @@ export const USER_DATA_PATHS = {
 
 // Database
 export const DB_FILENAME = 'orchflow.db'
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
+
+// Compact preview buffer size for the Sessions view (PRD §3.5.1: "默认 20 行")
+export const COMPACT_PREVIEW_LINES = 20
+
+// Approval gate timeout (5 minutes — long enough for a human to read a diff)
+export const APPROVAL_GATE_TIMEOUT_MS = 5 * 60 * 1000
 
 // Agent type defaults
 export const AGENT_DEFAULTS: Record<
@@ -47,20 +53,6 @@ export const HIGH_RISK_TOOL_PATTERNS: { pattern: RegExp; type: string; risk: 'hi
   { pattern: /drop\s+table|truncate\s+table/i, type: 'db_destructive', risk: 'high' },
   { pattern: /npm\s+install|npm\s+i\s|pnpm\s+add|yarn\s+add/i, type: 'install_deps', risk: 'medium' }
 ]
-
-// IPC channel allow-list for preload on() (defense in depth)
-export const ALLOWED_IPC_CHANNELS = [
-  'session:output',
-  'session:status',
-  'task:status',
-  'task:created',
-  'approval:request',
-  'approval:resolved',
-  'checkpoint:created',
-  'notification:new',
-  'message-bus:delivered',
-  'audit:entry'
-] as const
 
 // Keytar settings
 export const PROJECT_KEYTAR_SERVICE = 'OrchFlow'

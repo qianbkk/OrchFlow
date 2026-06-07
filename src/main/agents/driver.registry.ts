@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { AGENT_DEFAULTS } from '@shared/constants'
 import type { AgentType, DetectedAgent } from '@shared/types'
+import { settingsStore } from '../core/settings-store'
 import { ClaudeCodeDriver } from './claude-code.driver'
 import { StubDriver } from './stub.driver'
 import type { IAgentDriver } from './driver.interface'
@@ -36,8 +37,10 @@ export function listDrivers(): IAgentDriver[] {
 }
 
 export function getAgentBinaryPath(type: AgentType): string {
+  // Honor user-configured executable path if set; fall back to default
+  const configured = settingsStore.getAgentConfig(type)?.executablePath
+  if (typeof configured === 'string' && configured) return configured
   const def = AGENT_DEFAULTS[type]
-  // On Windows, prefer the .cmd shim that npm creates
   return def.cliBinary
 }
 

@@ -1,13 +1,15 @@
+// PRD §6.1 — initial schema
+// Migration v1 creates the schema. v2 documents the new 'cancelled' task status.
+// All CREATE statements use IF NOT EXISTS so re-running is idempotent.
 import type { DatabaseSync } from 'node:sqlite'
 import type { Migration } from '../migrations'
 
-// PRD §6.1 — initial schema
 export const migration001Initial: Migration = {
   version: 1,
   name: 'initial_schema',
   up: (db: DatabaseSync) => {
     db.exec(`
-      CREATE TABLE projects (
+      CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         root_path TEXT NOT NULL,
@@ -17,7 +19,7 @@ export const migration001Initial: Migration = {
         last_opened_at INTEGER NOT NULL
       );
 
-      CREATE TABLE tasks (
+      CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
         title TEXT NOT NULL,
@@ -34,16 +36,16 @@ export const migration001Initial: Migration = {
         approval_policy_json TEXT,
         persist_on_close INTEGER DEFAULT 0
       );
-      CREATE INDEX idx_tasks_project_status ON tasks(project_id, status);
+      CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 
-      CREATE TABLE task_dependencies (
+      CREATE TABLE IF NOT EXISTS task_dependencies (
         task_id TEXT NOT NULL REFERENCES tasks(id),
         depends_on_task_id TEXT NOT NULL REFERENCES tasks(id),
         message_config_json TEXT,
         PRIMARY KEY (task_id, depends_on_task_id)
       );
 
-      CREATE TABLE sessions (
+      CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL REFERENCES tasks(id),
         agent_type TEXT NOT NULL,
@@ -54,9 +56,9 @@ export const migration001Initial: Migration = {
         ended_at INTEGER,
         token_usage_json TEXT
       );
-      CREATE INDEX idx_sessions_task ON sessions(task_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 
-      CREATE TABLE audit_log (
+      CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
         session_id TEXT,
@@ -69,10 +71,10 @@ export const migration001Initial: Migration = {
         approved_by TEXT,
         approved_at INTEGER
       );
-      CREATE INDEX idx_audit_timestamp ON audit_log(timestamp);
-      CREATE INDEX idx_audit_task ON audit_log(task_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_id);
 
-      CREATE TABLE checkpoints (
+      CREATE TABLE IF NOT EXISTS checkpoints (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id),
         task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -84,7 +86,7 @@ export const migration001Initial: Migration = {
         description TEXT
       );
 
-      CREATE TABLE agent_messages (
+      CREATE TABLE IF NOT EXISTS agent_messages (
         id TEXT PRIMARY KEY,
         from_session_id TEXT,
         to_session_id TEXT,
@@ -95,7 +97,7 @@ export const migration001Initial: Migration = {
         delivered INTEGER DEFAULT 0
       );
 
-      CREATE TABLE notifications (
+      CREATE TABLE IF NOT EXISTS notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
         type TEXT NOT NULL,
@@ -106,7 +108,17 @@ export const migration001Initial: Migration = {
         read INTEGER DEFAULT 0,
         action_taken TEXT
       );
-      CREATE INDEX idx_notif_timestamp ON notifications(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_notif_timestamp ON notifications(timestamp);
     `)
+  }
+}
+
+export const migration002CancelledStatus: Migration = {
+  version: 2,
+  name: 'cancelled_status_documented',
+  up: (_db: DatabaseSync) => {
+    // SQLite tasks.status is TEXT, so 'cancelled' is accepted by all existing
+    // rows. This migration exists to bump schema_version and to document that
+    // 'cancelled' is now a first-class TaskStatus.
   }
 }

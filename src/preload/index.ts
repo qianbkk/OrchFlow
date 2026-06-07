@@ -99,7 +99,11 @@ const api: OrchFlowAPI = {
 
   on: (channel: string, listener: (payload: unknown) => void) => {
     if (!RECEIVE_EVENTS.includes(channel)) {
-      console.warn(`[preload] Unknown event channel: ${channel}`)
+      // True block: do not register the handler at all for unknown channels.
+      // This prevents a compromised renderer from subscribing to internal
+      // channels that aren't part of the public API.
+      console.error(`[preload] Blocked subscription to unknown channel: ${channel}`)
+      return () => undefined
     }
     const handler = (_: unknown, payload: unknown): void => listener(payload)
     ipcRenderer.on(channel, handler)

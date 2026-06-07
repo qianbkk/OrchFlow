@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { SCHEMA_VERSION } from '@shared/constants'
-import { migration001Initial } from './migrations/001_initial'
+import { migration001Initial, migration002CancelledStatus } from './migrations/001_initial'
 
 export interface Migration {
   version: number
@@ -8,7 +8,7 @@ export interface Migration {
   up: (db: DatabaseSync) => void
 }
 
-const MIGRATIONS: Migration[] = [migration001Initial]
+const MIGRATIONS: Migration[] = [migration001Initial, migration002CancelledStatus]
 
 export function runMigrations(db: DatabaseSync): void {
   // Ensure schema_version table exists

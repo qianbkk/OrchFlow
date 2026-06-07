@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AgentEvent, Session } from '@shared/types'
+import { COMPACT_PREVIEW_LINES } from '@shared/constants'
 
 export interface SessionLog {
   sessionId: string
@@ -15,13 +16,23 @@ interface SessionsState {
   selectedId: string | null
   select: (id: string | null) => void
   upsert: (session: Session) => void
-  append: (sessionId: string, line: string) => void
   setStatus: (sessionId: string, status: Session['status']) => void
   applyEvent: (event: AgentEvent) => void
   loadAll: (sessions: Session[]) => void
+  remove: (sessionId: string) => void
 }
 
-const MAX_LINES = 500
+const trim = (lines: string[]): string[] =>
+  lines.length > COMPACT_PREVIEW_LINES ? lines.slice(-COMPACT_PREVIEW_LINES) : lines
+
+const emptyLog = (s: { id: string; status: Session['status']; agentType: Session['agentType']; taskId: string }): SessionLog => ({
+  sessionId: s.id,
+  lines: [],
+  status: s.status,
+  agentType: s.agentType,
+  taskId: s.taskId,
+  updatedAt: Date.now()
+})
 
 export const useSessionsStore = create<SessionsState>((set) => ({
   byId: {},
@@ -29,47 +40,15 @@ export const useSessionsStore = create<SessionsState>((set) => ({
   select: (id) => set({ selectedId: id }),
   loadAll: (sessions) =>
     set(() => ({
-      byId: Object.fromEntries(
-        sessions.map((s) => [
-          s.id,
-          {
-            sessionId: s.id,
-            lines: [],
-            status: s.status,
-            agentType: s.agentType,
-            taskId: s.taskId,
-            updatedAt: Date.now()
-          }
-        ])
-      )
+      byId: Object.fromEntries(sessions.map((s) => [s.id, emptyLog(s)]))
     })),
   upsert: (session) =>
     set((state) => ({
       byId: {
         ...state.byId,
-        [session.id]: state.byId[session.id] ?? {
-          sessionId: session.id,
-          lines: [],
-          status: session.status,
-          agentType: session.agentType,
-          taskId: session.taskId,
-          updatedAt: Date.now()
-        }
+        [session.id]: state.byId[session.id] ?? emptyLog(session)
       }
     })),
-  append: (sessionId, line) =>
-    set((state) => {
-      const existing = state.byId[sessionId]
-      if (!existing) return state
-      const lines = [...existing.lines, line]
-      if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES)
-      return {
-        byId: {
-          ...state.byId,
-          [sessionId]: { ...existing, lines, updatedAt: Date.now() }
-        }
-      }
-    }),
   setStatus: (sessionId, status) =>
     set((state) => {
       const existing = state.byId[sessionId]
@@ -80,36 +59,36 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     }),
   applyEvent: (event) =>
     set((state) => {
-      const existing = state.byId[event.sessionId] ?? {
-        sessionId: event.sessionId,
-        lines: [],
-        status: 'idle' as const,
-        agentType: 'claude' as const,
-        taskId: event.taskId ?? '',
-        updatedAt: Date.now()
-      }
+      const existing =
+        state.byId[event.sessionId] ??
+        emptyLog({
+          id: event.sessionId,
+          status: 'idle',
+          agentType: 'claude',
+          taskId: event.taskId ?? ''
+        })
       const updates: Partial<SessionLog> = { updatedAt: Date.now() }
       if (event.type === 'output' || event.type === 'tool_call' || event.type === 'tool_result') {
-        const lines = [...existing.lines, event.content]
-        if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES)
-        updates.lines = lines
+        updates.lines = trim([...existing.lines, event.content])
       }
       if (event.type === 'status_change' && event.status) {
         updates.status = event.status
       }
       if (event.type === 'error') {
-        const lines = [...existing.lines, `[error] ${event.content}`]
-        if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES)
-        updates.lines = lines
+        updates.lines = trim([...existing.lines, `[error] ${event.content}`])
       }
       if (event.type === 'done') {
-        const lines = [...existing.lines, '[done]']
-        if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES)
-        updates.lines = lines
+        updates.lines = trim([...existing.lines, '[done]'])
         updates.status = 'done'
       }
       return {
         byId: { ...state.byId, [event.sessionId]: { ...existing, ...updates } }
       }
+    }),
+  remove: (sessionId) =>
+    set((state) => {
+      const { [sessionId]: _, ...rest } = state.byId
+      void _
+      return { byId: rest }
     })
 }))

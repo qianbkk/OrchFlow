@@ -79,6 +79,7 @@ export type TaskStatus =
   | 'pending_review'
   | 'done'
   | 'failed'
+  | 'cancelled'
   | 'paused'
 
 export type TaskMode = 'broadcast' | 'divide' | 'pipeline' | 'single'

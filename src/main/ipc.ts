@@ -1,11 +1,12 @@
 import { ipcMain } from 'electron'
-import { basename } from 'node:path'
-import { existsSync } from 'node:fs'
+import { basename, resolve, isAbsolute, join } from 'node:path'
+import { existsSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import * as keytar from 'keytar'
 import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS, APP_VERSION } from '@shared/constants'
-import type { Project, TaskCreateInput, SessionConfig } from '@shared/types'
+import type { Project, Task, TaskCreateInput, SessionConfig } from '@shared/types'
 import { ProjectRepository } from './db/repositories/project.repository'
 import { TaskRepository } from './db/repositories/task.repository'
 import { SessionRepository } from './db/repositories/session.repository'
@@ -26,15 +27,47 @@ const audit = new AuditRepository()
 const checkpoints = new CheckpointRepository()
 const notifications = new NotificationRepository()
 
-const requireTask = (id: string): TaskRepository extends { get: (k: string) => infer T } ? T : never => {
+const requireTask = (id: string): Task => {
   const t = tasks.get(id)
   if (!t) throw new Error(`Task not found: ${id}`)
-  return t as never
+  return t
+}
+
+/** Validate that a renderer-supplied path is an absolute, existing directory
+ *  that lives under the user's home (defense against renderer-driven FS access). */
+function validateUserPath(p: string, label: string): string {
+  if (typeof p !== 'string' || p.length === 0) {
+    throw new Error(`${label}: path must be a non-empty string`)
+  }
+  const abs = isAbsolute(p) ? p : resolve(homedir(), p)
+  if (!existsSync(abs)) throw new Error(`${label}: path does not exist: ${abs}`)
+  if (!existsSync(abs) || existsSync(resolve(abs))) {
+    // placeholder: keeps TS happy with strict noUncheckedIndexedAccess
+  }
+  let real: string
+  try {
+    real = realpathSync(abs)
+  } catch {
+    throw new Error(`${label}: cannot resolve real path: ${abs}`)
+  }
+  const home = homedir()
+  if (!real.startsWith(home + '\\') && !real.startsWith(home + '/') && real !== home) {
+    throw new Error(`${label}: path is outside the user's home directory`)
+  }
+  // Reject Windows device / UNC paths
+  if (real.startsWith('\\\\?\\') || real.startsWith('//./') || real.startsWith('//localhost/')) {
+    throw new Error(`${label}: device/UNC paths are not allowed`)
+  }
+  return real
 }
 
 function csvEscape(v: unknown): string {
   const s = String(v)
-  return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
+  // Guard against CSV formula injection (=, +, -, @, tab, CR) by prefixing with a single quote
+  const needsQuoting = /[",\r\n\t]/.test(s)
+  const isFormula = /^[=+\-@\t\r]/.test(s)
+  const escaped = isFormula ? `'${s}` : s
+  return needsQuoting || isFormula ? `"${escaped.replace(/"/g, '""')}"` : escaped
 }
 
 // App info
@@ -55,9 +88,12 @@ ipcMain.handle('projects:setCurrent', (_e, projectId: string): void => {
   currentProjectStore.set(projectId)
 })
 ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
-  if (!existsSync(rootPath)) throw new Error(`Path does not exist: ${rootPath}`)
-  const name = basename(rootPath)
-  const existing = projects.findByPath(rootPath)
+  const validated = validateUserPath(rootPath, 'projects:open')
+  if (!existsSync(join(validated, '.git'))) {
+    throw new Error(`Not a git repository: ${validated}`)
+  }
+  const name = basename(validated)
+  const existing = projects.findByPath(validated)
   if (existing) {
     projects.touch(existing.id)
     currentProjectStore.set(existing.id)
@@ -66,7 +102,7 @@ ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
   const project: Project = {
     id: randomUUID(),
     name,
-    rootPath,
+    rootPath: validated,
     createdAt: Date.now(),
     lastOpenedAt: Date.now()
   }
@@ -76,7 +112,7 @@ ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
     timestamp: Date.now(),
     actor: 'user',
     actionType: 'project_open',
-    actionDetailJson: JSON.stringify({ rootPath }),
+    actionDetailJson: JSON.stringify({ rootPath: validated }),
     approvalStatus: 'auto'
   })
   return project
@@ -128,9 +164,19 @@ ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const task = tasks.get(session.taskId)
   if (!task) throw new Error(`Task not found: ${session.taskId}`)
+  if (!task.worktreePath) throw new Error('Task has no worktree to open externally')
   const cliPath = getAgentBinaryPath(session.agentType)
-  void exec(
-    `wt -w 0 new-tab --title "OrchFlow ${session.agentType}" -d "${task.worktreePath ?? '.'}" "${cliPath}"`
+  // Use execFile with an arg array to prevent shell-injection from any
+  // worktree path or agent type that contains shell metacharacters.
+  void execFile(
+    'wt',
+    [
+      '-w', '0',
+      'new-tab',
+      '--title', `OrchFlow ${session.agentType}`,
+      '-d', task.worktreePath,
+      cliPath
+    ]
   )
 })
 
@@ -160,14 +206,15 @@ ipcMain.handle('checkpoints:rollback', async (_e, checkpointId: string) => {
 })
 
 // Git
-ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => getWorktreeDiff(worktreePath))
+ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => {
+  const validated = validateUserPath(worktreePath, 'git:getDiff')
+  return getWorktreeDiff(validated)
+})
 ipcMain.handle('git:merge', async (_e, taskId: string) => {
-  requireTask(taskId)
-  await mergeWorktree(tasks.get(taskId) as never)
+  await mergeWorktree(requireTask(taskId))
 })
 ipcMain.handle('git:discard', async (_e, taskId: string) => {
-  requireTask(taskId)
-  await discardWorktree(tasks.get(taskId) as never)
+  await discardWorktree(requireTask(taskId))
 })
 ipcMain.handle('git:keep', (_e, taskId: string) => {
   requireTask(taskId)

@@ -3,6 +3,7 @@ import { Plus, FolderOpen, GitMerge } from 'lucide-react'
 import type { Project, Task } from '@shared/types'
 import { TaskCreateDialog } from '../components/TaskCreateDialog'
 import { DiffViewer } from '../components/DiffViewer'
+import { StatusPill } from '../components/StatusPill'
 
 export function TasksView(): React.JSX.Element {
   const [project, setProject] = useState<Project | null>(null)
@@ -99,17 +100,17 @@ export function TasksView(): React.JSX.Element {
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium">{t.title}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${
+                  <StatusPill
+                    tone={
                       t.status === 'done'
-                        ? 'bg-[var(--color-accent-2)]/20 text-[var(--color-accent-2)]'
-                        : t.status === 'failed'
-                          ? 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]'
-                          : 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
-                    }`}
+                        ? 'accent2'
+                        : t.status === 'failed' || t.status === 'cancelled'
+                          ? 'danger'
+                          : 'accent'
+                    }
                   >
                     {t.status}
-                  </span>
+                  </StatusPill>
                 </div>
                 {t.description && (
                   <p className="mt-1 line-clamp-2 text-sm text-[var(--color-text-1)]">

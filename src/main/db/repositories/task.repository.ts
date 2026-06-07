@@ -93,7 +93,7 @@ export class TaskRepository extends Repository {
       updates.push('started_at = ?')
       params.push(Date.now())
     }
-    if (status === 'done' || status === 'failed') {
+    if (status === 'done' || status === 'failed' || status === 'cancelled') {
       updates.push('completed_at = ?')
       params.push(Date.now())
     }

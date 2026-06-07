@@ -1,15 +1,44 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
-import type { AgentEvent, Session, SessionConfig, SessionStatus } from '@shared/types'
+import type { AgentEvent, Session, SessionConfig, SessionStatus, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
 import { getAgentBinaryPath } from './driver.registry'
+import { approvalGate } from '../core/approval-gate'
+import { settingsStore } from '../core/settings-store'
+
+/** Env vars forwarded to the spawned CLI — never the whole process.env. */
+const ALLOWED_ENV_KEYS = new Set([
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR',
+  'TEMP', 'TMP', 'LANG', 'LC_ALL', 'LC_CTYPE',
+  'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'TZ', 'LANG', 'SHELL',
+  // Windows Terminal specific
+  'WT_SESSION', 'WT_PROFILE_ID',
+  // Node / npm resolution
+  'NODE_PATH', 'NODE_OPTIONS', 'NPM_CONFIG_PREFIX',
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA'
+])
+
+function buildChildEnv(overrides: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && ALLOWED_ENV_KEYS.has(k)) env[k] = v
+  }
+  // Pull API key from keytar (don't leak process.env)
+  const apiKey = settingsStore.getAgentConfig('claude')?.['apiKey']
+  if (typeof apiKey === 'string' && apiKey) env['ANTHROPIC_API_KEY'] = apiKey
+  Object.assign(env, overrides)
+  return env
+}
 
 interface SessionState {
   session: Session
   pty: pty.IPty | null
   subscribers: Set<(event: AgentEvent) => void>
   buffer: string
+  cancelled: boolean
+  pendingApproval: Promise<boolean> | null
 }
 
 const sessions = new Map<string, SessionState>()
@@ -26,6 +55,7 @@ function emit(state: SessionState, event: Omit<AgentEvent, 'sessionId'>): void {
 }
 
 function setStatus(state: SessionState, status: SessionStatus): void {
+  if (state.session.status === status) return
   state.session.status = status
   emit(state, {
     type: 'status_change',
@@ -36,20 +66,73 @@ function setStatus(state: SessionState, status: SessionStatus): void {
   })
 }
 
+/** Best-effort classification of a tool-use event into a ToolCall shape. */
+function toolCallFromEvent(obj: Record<string, unknown>): ToolCall | null {
+  const rawName = (obj.tool as string) ?? (obj.name as string) ?? (obj.tool_name as string) ?? ''
+  const name = rawName.toLowerCase()
+  const input = (obj.input as Record<string, unknown>) ?? {}
+  const description = (input.description as string) ?? (input.command as string) ?? name
+  const detail = input.command as string | undefined
+  const filesAffected = Array.isArray(input.paths)
+    ? (input.paths as unknown[]).map((p) => String(p))
+    : input.path
+      ? [String(input.path)]
+      : undefined
+  let type: ToolCall['type'] = 'other'
+  if (/(delete|rm|rmdir|unlink|drop|truncate)/.test(name) || /rm\s+-rf|drop\s+table/.test(description)) {
+    type = name.includes('rm') || name.includes('delete') || name.includes('unlink') || name.includes('rmdir')
+      ? 'file_delete'
+      : 'db_destructive'
+  } else if (/write|create|edit|patch|save/.test(name)) {
+    type = 'file_write'
+  } else if (/read|cat|view|fetch/.test(name)) {
+    type = 'file_read'
+  } else if (/bash|shell|exec|command|run/.test(name) || /git\s+merge/i.test(description)) {
+    type = name.includes('merge') ? 'merge' : /install|add/.test(description) ? 'install_deps' : 'shell'
+  } else if (/push/.test(name)) {
+    type = /force/.test(description) ? 'git_force_push' : 'git_push'
+  }
+  return { type, description, detail, filesAffected }
+}
+
 function parseStreamJsonLine(state: SessionState, line: string): boolean {
-  // Best-effort JSON parse for claude --output-format stream-json
   if (!line.trim()) return false
   try {
     const obj = JSON.parse(line) as Record<string, unknown>
     const eventType = (obj.type as string) ?? (obj.event as string) ?? 'output'
     if (eventType === 'tool_use' || eventType === 'tool_call') {
       const toolName = (obj.tool as string) ?? (obj.name as string) ?? 'unknown'
+      const toolCall = toolCallFromEvent(obj)
+      // For high-risk operations, request approval BEFORE emitting the
+      // event to the UI. The session moves to 'waiting_approval'.
+      const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
+      const needsApproval = toolCall ? HIGH_RISK_TYPES.includes(toolCall.type) : false
+
       emit(state, {
         type: 'tool_call',
         timestamp: Date.now(),
         content: `Tool call: ${toolName}`,
-        taskId: state.session.taskId
+        taskId: state.session.taskId,
+        toolCall: toolCall ?? undefined
       })
+
+      if (needsApproval && toolCall && !state.cancelled) {
+        setStatus(state, 'waiting_approval')
+        // Fire-and-forget: the result of approval drives the status, not the event emission
+        state.pendingApproval = approvalGate
+          .request(state.session.id, state.session.taskId ?? '', toolCall)
+          .then((approved) => {
+            state.pendingApproval = null
+            if (state.cancelled) return approved
+            setStatus(state, approved ? 'running' : 'error')
+            return approved
+          })
+          .catch((err) => {
+            console.error('[claude-driver] approval gate error:', err)
+            state.pendingApproval = null
+            return false
+          })
+      }
       return true
     }
     if (eventType === 'tool_result') {
@@ -109,13 +192,15 @@ export class ClaudeCodeDriver implements IAgentDriver {
       session,
       pty: null,
       subscribers: new Set(),
-      buffer: ''
+      buffer: '',
+      cancelled: false,
+      pendingApproval: null
     }
     sessions.set(session.id, state)
 
     const bin = getAgentBinaryPath(this.type)
     const cwd = existsSync(config.worktreePath) ? config.worktreePath : process.cwd()
-    const env = { ...process.env, ...(config.env ?? {}) }
+    const env = buildChildEnv(config.env)
 
     let ptyProc: pty.IPty
     try {
@@ -127,8 +212,6 @@ export class ClaudeCodeDriver implements IAgentDriver {
         env
       })
     } catch (err) {
-      // PTY not available (e.g. native module missing); fall back to running nothing
-      // so the UI can still show the error path.
       setStatus(state, 'error')
       emit(state, {
         type: 'error',
@@ -136,6 +219,8 @@ export class ClaudeCodeDriver implements IAgentDriver {
         content: `Failed to spawn ${bin}: ${err instanceof Error ? err.message : String(err)}`,
         taskId: state.session.taskId
       })
+      // Clean up immediately so the entry doesn't linger
+      sessions.delete(session.id)
       return session
     }
 
@@ -164,6 +249,7 @@ export class ClaudeCodeDriver implements IAgentDriver {
       if (state.session.status === 'running' || state.session.status === 'initializing') {
         setStatus(state, exitCode === 0 ? 'done' : 'error')
       }
+      state.pty = null
     })
 
     return session
@@ -172,14 +258,19 @@ export class ClaudeCodeDriver implements IAgentDriver {
   async stop(sessionId: string, mode: 'graceful' | 'force'): Promise<void> {
     const state = sessions.get(sessionId)
     if (!state) return
-    if (state.pty) {
+    state.cancelled = true
+    const ptyToKill = state.pty
+    state.pty = null
+    if (ptyToKill) {
       try {
         if (mode === 'force') {
-          state.pty.kill('SIGKILL')
+          ptyToKill.kill('SIGKILL')
         } else {
           // Send Ctrl-C and wait
-          state.pty.write('\x03')
-          setTimeout(() => state.pty?.kill('SIGTERM'), 2000)
+          ptyToKill.write('\x03')
+          setTimeout(() => {
+            try { ptyToKill.kill('SIGTERM') } catch { /* already gone */ }
+          }, 2000)
         }
       } catch (err) {
         console.error(`[claude-driver] stop failed:`, err)

@@ -56,26 +56,36 @@ export const approvalGate = {
       status: 'pending'
     }
     queue.push(request)
+
+    // Use a placeholder pending entry so `approve` / `reject` are always
+    // callable, even if called synchronously by the renderer before the
+    // Promise callback has a chance to register the real one.
+    let resolveFn!: (approved: boolean) => void
+    const promise = new Promise<boolean>((r) => {
+      resolveFn = r
+    })
+    const timer = setTimeout(() => {
+      request.status = 'rejected'
+      request.resolvedAt = Date.now()
+      request.resolvedBy = 'timeout'
+      const idx = queue.indexOf(request)
+      if (idx >= 0) queue.splice(idx, 1)
+      pending.delete(request.id)
+      broadcast('approval:resolved', request)
+      resolveFn(false)
+    }, 5 * 60 * 1000)
+    pending.set(request.id, { resolve: resolveFn, timer })
+
     broadcast('approval:request', request)
     notifier.notify({
       type: 'approval_required',
       title: `${riskLevel.toUpperCase()} risk action pending`,
-      body: toolCall.description.slice(0, 100),
+      body: toolCall.type,
       sessionId,
       taskId
     })
 
-    return new Promise<boolean>((resolveFn) => {
-      const timer = setTimeout(() => {
-        // Default deny after 5 minutes
-        request.status = 'rejected'
-        const idx = queue.indexOf(request)
-        if (idx >= 0) queue.splice(idx, 1)
-        pending.delete(request.id)
-        resolveFn(false)
-      }, 5 * 60 * 1000)
-      pending.set(request.id, { resolve: resolveFn, timer })
-    })
+    return promise
   },
 
   approve: (requestId: string): boolean => resolve(requestId, 'approved'),

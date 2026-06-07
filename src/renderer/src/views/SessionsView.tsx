@@ -174,12 +174,9 @@ export function SessionsView(): React.JSX.Element {
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => void window.orchflow.sessions.openExternal(selected.sessionId)}
-                    className="rounded px-2 py-0.5 text-xs text-[var(--color-text-1)] hover:bg-[var(--color-bg-3)]"
-                  >
-                    Open External
-                  </button>
+                  {/* Open External is a PRD Phase 2 feature. Hidden in Phase 0
+                      MVP to keep the UI minimal and avoid an in-app terminal
+                      that synchronizes output via shared log. */}
                 </div>
               </div>
               <div className="flex-1 overflow-hidden p-2">

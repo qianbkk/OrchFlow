@@ -11,9 +11,31 @@ import { broadcast } from './broadcast'
 const sessions = new SessionRepository()
 const audit = new AuditRepository()
 
+/** Per-session cleanup callbacks so we can release driver subscribers on stop. */
+const sessionCleanup = new Map<string, () => void>()
+
 function pushEvent(event: AgentEvent): void {
   const channel = event.type === 'status_change' ? 'session:status' : 'session:output'
   broadcast(channel, event)
+}
+
+/** Only log security-relevant events; output stream is too chatty. */
+function shouldAudit(event: AgentEvent): boolean {
+  switch (event.type) {
+    case 'tool_call':
+    case 'error':
+      return true
+    case 'status_change':
+      // Only log terminal status transitions
+      return event.status === 'done' || event.status === 'error' || event.status === 'waiting_approval'
+    case 'tool_result':
+      // Log only if the result carries a high-risk marker (set by the driver)
+      return false
+    case 'output':
+    case 'done':
+    default:
+      return false
+  }
 }
 
 export const sessionManager = {
@@ -22,7 +44,7 @@ export const sessionManager = {
     const session = await driver.start(config)
     sessions.create(session)
 
-    driver.subscribe(session.id, (event) => {
+    const unsubscribe = driver.subscribe(session.id, (event) => {
       if (event.type === 'status_change' && event.status) {
         sessions.updateStatus(session.id, event.status, session.pid)
         if (event.status === 'done' || event.status === 'error') {
@@ -36,18 +58,39 @@ export const sessionManager = {
           })
         }
       }
-      audit.log({
-        timestamp: event.timestamp,
-        sessionId: session.id,
-        taskId: session.taskId,
-        actor: `agent:${session.agentType}`,
-        actionType: event.type,
-        actionDetailJson: typeof event.content === 'string' ? JSON.stringify({ content: event.content.slice(0, 500) }) : undefined,
-        riskLevel: event.type === 'tool_call' ? 'medium' : 'low',
-        approvalStatus: 'auto'
-      })
+      // Only log security-relevant events to the audit log; the per-event
+      // output stream would otherwise flood the table and drown out the
+      // actual security signal.
+      if (shouldAudit(event)) {
+        try {
+          audit.log({
+            timestamp: event.timestamp,
+            sessionId: session.id,
+            taskId: session.taskId,
+            actor: `agent:${session.agentType}`,
+            actionType: event.type,
+            actionDetailJson:
+              typeof event.content === 'string'
+                ? JSON.stringify({ content: event.content.slice(0, 500) })
+                : event.toolCall
+                  ? JSON.stringify(event.toolCall)
+                  : undefined,
+            riskLevel:
+              event.type === 'tool_call'
+                ? 'medium'
+                : event.type === 'error'
+                  ? 'high'
+                  : 'low',
+            approvalStatus: 'auto'
+          })
+        } catch (err) {
+          console.error('[session-manager] audit.log failed:', err)
+        }
+      }
       pushEvent(event)
     })
+    // Attach the unsubscribe so stop() can release the closure
+    sessionCleanup.set(session.id, unsubscribe)
 
     audit.log({
       timestamp: Date.now(),
@@ -65,6 +108,11 @@ export const sessionManager = {
     const s = sessions.get(sessionId)
     if (!s) return
     const driver = getDriver(s.agentType)
+    const cleanup = sessionCleanup.get(sessionId)
+    if (cleanup) {
+      cleanup()
+      sessionCleanup.delete(sessionId)
+    }
     await driver.stop(sessionId, mode)
     sessions.end(sessionId)
   },

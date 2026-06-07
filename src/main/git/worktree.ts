@@ -24,8 +24,11 @@ export async function ensureWorktree(
     mkdirSync(base, { recursive: true })
   }
   const safeTitle = taskTitle.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase().slice(0, 30) || 'task'
-  const branchName = `orch/${safeTitle}-${taskId.slice(0, 8)}`
-  const worktreePath = join(base, `${safeTitle}-${taskId.slice(0, 8)}`)
+  // PRD §3.8: `orch/[task-name]-[timestamp]`. Append taskId slice for
+  // additional collision safety across same-second creates.
+  const ts = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14) // YYYYMMDDHHMMSS
+  const branchName = `orch/${safeTitle}-${ts}-${taskId.slice(0, 6)}`
+  const worktreePath = join(base, `${safeTitle}-${ts}-${taskId.slice(0, 6)}`)
 
   const git: SimpleGit = simpleGit(projectRoot)
   try {
