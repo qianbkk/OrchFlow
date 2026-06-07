@@ -1,0 +1,51 @@
+appId: com.orchflow.app
+productName: OrchFlow
+copyright: Copyright © 2026 qianbkk
+directories:
+  output: release-app
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{eslint.config.js,.eslintignore,.prettierignore,.prettierrc.yaml,*.sass,*.scss,*.less}'
+  - '!{OWNERS,SECURITY.md,SECURITY.CN.md,README.md,README.CN.md,CODE_OF_CONDUCT.md}'
+  - '!{LICENSE,LICENSE.md,LICENSE.txt,license,license.md,license.txt,NOTICE,NOTICE.md,NOTICE.txt}'
+  - '!{CHANGELOG.md,CHANGELOG.CN.md,CONTRIBUTING.md,CONTRIBUTING.CN.md,docs/*}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tests,docs,build,dist,release-app,out,coverage}/**'
+  - '!{test,__tests__,tests,powered-test,example}/**'
+asarUnpack:
+  - resources/**
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-Setup-${arch}.${ext}
+nsis:
+  artifactName: ${productName}-${version}-Setup-${arch}.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  category: public.app-category.developer-tools
+linux:
+  target:
+    - AppImage
+  artifactName: ${productName}-${version}.${ext}
+  category: Development
+npmRebuild: true
+nodeGypRebuild: false
