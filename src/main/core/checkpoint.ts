@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { simpleGit } from 'simple-git'
 import { existsSync } from 'node:fs'
-import type { Checkpoint, CheckpointType } from '@shared/types'
+import type { Checkpoint, CheckpointType, DiffResult, DiffFile } from '@shared/types'
 import { CheckpointRepository } from '../db/repositories/checkpoint.repository'
 import { TaskRepository } from '../db/repositories/task.repository'
 import { AuditRepository } from '../db/repositories/audit.repository'
@@ -82,5 +82,57 @@ export const checkpointManager = {
 
   list(sessionId: string): Checkpoint[] {
     return repo.list(sessionId)
+  },
+
+  /** Compute the diff between a checkpoint commit and the current HEAD of
+   *  the task's worktree. This is the "what would be undone if I rolled
+   *  back to this checkpoint" preview shown in the CheckpointTimeline UI
+   *  before the user confirms a rollback (PRD §3.4.3). */
+  async getRollbackDiff(checkpointId: string): Promise<DiffResult> {
+    const cp = repo.get(checkpointId)
+    if (!cp) throw new Error(`Checkpoint not found: ${checkpointId}`)
+    if (!cp.gitCommit) throw new Error('Checkpoint has no git commit to diff against')
+    const task = new TaskRepository().get(cp.taskId)
+    if (!task?.worktreePath) throw new Error('Task has no worktree')
+    if (!existsSync(task.worktreePath)) throw new Error(`Worktree missing: ${task.worktreePath}`)
+
+    const git = simpleGit(task.worktreePath)
+    const summary = { added: 0, removed: 0, modified: 0 }
+    const files: DiffFile[] = []
+    try {
+      // `git diff <cpCommit>..HEAD` shows what would be undone by rollback
+      const stat = await git.raw(['diff', '--numstat', `${cp.gitCommit}..HEAD`]).catch(() => '')
+      const fullDiff = await git.raw(['diff', `${cp.gitCommit}..HEAD`]).catch(() => '')
+      const fileStats = stat
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          const [add, del, path] = l.split('\t')
+          return { path, additions: parseInt(add ?? '0', 10) || 0, deletions: parseInt(del ?? '0', 10) || 0 }
+        })
+      for (const fs of fileStats) {
+        // Parse per-file diff by extracting the hunk between @@ markers
+        const fileRegex = new RegExp(`diff --git a/${escapeRegex(fs.path)} b/${escapeRegex(fs.path)}[\\s\\S]*?(?=^diff --git |$)`, 'm')
+        const match = fileRegex.exec(fullDiff)
+        const fileDiff = match ? match[0] : ''
+        files.push({
+          path: fs.path,
+          status: fs.additions > 0 && fs.deletions === 0 ? 'added' : fs.deletions > 0 && fs.additions === 0 ? 'deleted' : 'modified',
+          additions: fs.additions,
+          deletions: fs.deletions,
+          diff: fileDiff
+        })
+        if (fs.additions > 0 && fs.deletions === 0) summary.added++
+        else if (fs.deletions > 0 && fs.additions === 0) summary.removed++
+        else summary.modified++
+      }
+    } catch (err) {
+      console.error('[checkpoint] rollback diff failed:', err)
+    }
+    return { worktreePath: task.worktreePath, files, summary }
   }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

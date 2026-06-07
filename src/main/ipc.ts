@@ -204,6 +204,11 @@ ipcMain.handle('checkpoints:rollback', async (_e, checkpointId: string) => {
   if (!checkpoints.get(checkpointId)) throw new Error(`Checkpoint not found: ${checkpointId}`)
   await sessionManager.rollbackToCheckpoint(checkpointId)
 })
+ipcMain.handle('checkpoints:rollbackDiff', async (_e, checkpointId: string) => {
+  // PRD §3.4.3: rollback preview — "将撤销哪些操作"
+  const { checkpointManager } = await import('./core/checkpoint')
+  return checkpointManager.getRollbackDiff(checkpointId)
+})
 
 // Git
 ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => {

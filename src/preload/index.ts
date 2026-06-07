@@ -76,7 +76,9 @@ const api: OrchFlowAPI = {
     list: (sessionId: string) => ipcRenderer.invoke('checkpoints:list', sessionId) as Promise<Checkpoint[]>,
     create: (sessionId: string, description: string) =>
       ipcRenderer.invoke('checkpoints:create', sessionId, description) as Promise<Checkpoint>,
-    rollback: (checkpointId: string) => ipcRenderer.invoke('checkpoints:rollback', checkpointId) as Promise<void>
+    rollback: (checkpointId: string) => ipcRenderer.invoke('checkpoints:rollback', checkpointId) as Promise<void>,
+    rollbackDiff: (checkpointId: string) =>
+      ipcRenderer.invoke('checkpoints:rollbackDiff', checkpointId) as Promise<DiffResult>
   },
 
   git: {

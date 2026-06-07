@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, Loader2, Pause, CheckCircle2, XCircle, Play } from 'lucide-react'
+import { Circle, Loader2, Pause, CheckCircle2, XCircle, Play, ChevronDown, ChevronRight } from 'lucide-react'
 import type { DetectedAgent, Session, SessionStatus } from '@shared/types'
 import { TerminalPane } from '../components/TerminalPane'
 import { useSessionsStore } from '../stores/sessions.store'
 import { useRefreshOn } from '../hooks/useRefreshOn'
+import { CheckpointTimeline } from '../components/CheckpointTimeline'
 
 const STATUS_ICON: Record<SessionStatus, React.ComponentType<{ size?: number; className?: string }>> = {
   idle: Circle,
@@ -182,6 +183,10 @@ export function SessionsView(): React.JSX.Element {
               <div className="flex-1 overflow-hidden p-2">
                 <SessionOutput sessionId={selected.sessionId} />
               </div>
+              {/* PRD §3.4.3: checkpoint timeline (collapsible, below the
+                  terminal output). Shows markers for auto/manual/pre_approval
+                  checkpoints with preview + rollback actions. */}
+              <CollapsibleTimeline sessionId={selected.sessionId} />
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-text-2)]">
@@ -228,5 +233,25 @@ function SessionOutput({ sessionId }: { sessionId: string }): React.JSX.Element 
         }
       }}
     />
+  )
+}
+
+function CollapsibleTimeline({ sessionId }: { sessionId: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="shrink-0 border-t border-[var(--color-border-1)] bg-[var(--color-bg-1)]">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-2)] hover:bg-[var(--color-bg-2)]"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        Checkpoints
+      </button>
+      {open && (
+        <div className="max-h-80 overflow-auto px-2 pb-3">
+          <CheckpointTimeline sessionId={sessionId} />
+        </div>
+      )}
+    </div>
   )
 }

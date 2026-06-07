@@ -332,6 +332,7 @@ export interface CheckpointsAPI {
   list(sessionId: string): Promise<Checkpoint[]>
   create(sessionId: string, description: string): Promise<Checkpoint>
   rollback(checkpointId: string): Promise<void>
+  rollbackDiff(checkpointId: string): Promise<DiffResult>
 }
 
 export interface GitAPI {
