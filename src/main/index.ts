@@ -39,6 +39,8 @@ function installCSP(): void {
 }
 
 function createWindow(): void {
+  // __dirnameSafe points to out/main; preload is at out/preload (two levels up)
+  const preloadPath = join(__dirnameSafe.replace(/\\/g, '/'), '../../preload/index.js')
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -49,11 +51,21 @@ function createWindow(): void {
     backgroundColor: '#0b1020',
     titleBarStyle: 'hidden',
     webPreferences: {
-      preload: join(__dirnameSafe.replace(/\\/g, '/'), '../preload/index.js'),
+      preload: preloadPath,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
+  })
+
+  // Dev mode: auto-open DevTools for debugging
+  if (is.dev) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  // Log renderer load errors
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc) => {
+    console.error(`[main] Renderer load failed: code=${code}, desc=${desc}`)
   })
 
   mainWindow.on('ready-to-show', () => {
@@ -67,10 +79,14 @@ function createWindow(): void {
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    console.log('[main] Loading renderer from:', process.env['ELECTRON_RENDERER_URL'])
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    void mainWindow.loadFile(join(__dirnameSafe.replace(/\\/g, '/'), '../renderer/index.html'))
+    const htmlPath = join(__dirnameSafe.replace(/\\/g, '/'), '../renderer/index.html')
+    console.log('[main] Loading renderer from file:', htmlPath)
+    void mainWindow.loadFile(htmlPath)
   }
+  console.log('[main] Preload path:', preloadPath)
 }
 
 app.whenReady().then(() => {

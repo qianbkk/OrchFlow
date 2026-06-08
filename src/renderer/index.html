@@ -7,8 +7,13 @@
          Dev mode needs permissive CSP for Vite's HMR inline scripts. -->
     <title>OrchFlow</title>
   </head>
-  <body class="bg-[#0b1020] text-slate-100">
-    <div id="root"></div>
+  <body class="bg-[#0b1020] text-slate-100" style="background:#0b1020;color:#e6e9f2;margin:0;height:100vh;overflow:hidden">
+    <div id="root">
+      <!-- Fallback: visible if React fails to mount. Removed by React on mount. -->
+      <div id="orchflow-loading" style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif">
+        <p style="color:#7c8cff;font-size:18px">OrchFlow is loading…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
