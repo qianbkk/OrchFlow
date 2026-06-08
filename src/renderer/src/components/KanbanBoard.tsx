@@ -59,7 +59,7 @@ export function KanbanBoard({ tasks, onStatusChange, onSelect }: KanbanBoardProp
   return (
     <div className="grid grid-cols-4 gap-3 p-4">
       {KANBAN_COLUMNS.map((col) => {
-        const columnTasks = tasks.filter((t) => col.statuses.includes(t.status as typeof col.statuses[number]))
+        const columnTasks = tasks.filter((t) => (col.statuses as readonly string[]).includes(t.status))
         const isOver = dragOverColumn === col.key
 
         return (

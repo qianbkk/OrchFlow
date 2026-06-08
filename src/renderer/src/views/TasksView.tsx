@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Plus, FolderOpen, GitMerge, List, Columns3 } from 'lucide-react'
-import type { Project, Task, TaskStatus } from '@shared/types'
+import type { Project, Task } from '@shared/types'
 import { TaskCreateDialog } from '../components/TaskCreateDialog'
 import { DiffViewer } from '../components/DiffViewer'
 import { KanbanBoard } from '../components/KanbanBoard'

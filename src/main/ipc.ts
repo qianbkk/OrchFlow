@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import * as keytar from 'keytar'
 import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS, APP_VERSION } from '@shared/constants'
-import type { Project, Task, TaskCreateInput, SessionConfig } from '@shared/types'
+import type { Project, Task, TaskCreateInput, SessionConfig, TaskFilters, AuditFilters } from '@shared/types'
 import { ProjectRepository } from './db/repositories/project.repository'
 import { TaskRepository } from './db/repositories/task.repository'
 import { SessionRepository } from './db/repositories/session.repository'
@@ -48,15 +48,21 @@ function validateUserPath(p: string, label: string): string {
     throw new Error(`${label}: cannot resolve real path: ${abs}`)
   }
   const home = homedir()
-  const normalizedHome = home.endsWith('/') || home.endsWith('\\') ? home : home + '/'
-  if (real !== home && !real.startsWith(normalizedHome)) {
+  // SECURITY: Use path.normalize + path.sep for strict directory boundary check.
+  // Prevents prefix attacks like /home/user-malicious matching /home/user.
+  const normalizedReal = resolve(real)
+  const normalizedHome = resolve(home)
+  const homeWithSep = normalizedHome.endsWith('/') || normalizedHome.endsWith('\\')
+    ? normalizedHome
+    : normalizedHome + '/'
+  if (normalizedReal !== normalizedHome && !normalizedReal.startsWith(homeWithSep)) {
     throw new Error(`${label}: path is outside the user's home directory`)
   }
   // Reject Windows device / UNC paths
-  if (real.startsWith('\\\\?\\') || real.startsWith('//./') || real.startsWith('//localhost/')) {
+  if (normalizedReal.startsWith('\\\\?\\') || normalizedReal.startsWith('//./') || normalizedReal.startsWith('//localhost/')) {
     throw new Error(`${label}: device/UNC paths are not allowed`)
   }
-  return real
+  return normalizedReal
 }
 
 function csvEscape(v: unknown): string {
@@ -66,6 +72,35 @@ function csvEscape(v: unknown): string {
   const isFormula = /^[=+\-@\t\r]/.test(s)
   const escaped = isFormula ? `'${s}` : s
   return needsQuoting || isFormula ? `"${escaped.replace(/"/g, '""')}"` : escaped
+}
+
+/** Runtime validation for IPC filter inputs. Prevents malformed data from
+ *  reaching repository queries when renderer sends unexpected shapes. */
+function parseTaskFilters(input: unknown): TaskFilters | undefined {
+  if (input == null || typeof input !== 'object') return undefined
+  const f = input as Record<string, unknown>
+  return {
+    projectId: typeof f.projectId === 'string' ? f.projectId : undefined,
+    status: typeof f.status === 'string' ? f.status as TaskFilters['status'] : undefined,
+    agentType: typeof f.agentType === 'string' ? f.agentType as TaskFilters['agentType'] : undefined,
+    from: typeof f.from === 'number' ? f.from : undefined,
+    to: typeof f.to === 'number' ? f.to : undefined
+  }
+}
+
+function parseAuditFilters(input: unknown): AuditFilters {
+  if (input == null || typeof input !== 'object') return {}
+  const f = input as Record<string, unknown>
+  return {
+    projectId: typeof f.projectId === 'string' ? f.projectId : undefined,
+    sessionId: typeof f.sessionId === 'string' ? f.sessionId : undefined,
+    taskId: typeof f.taskId === 'string' ? f.taskId : undefined,
+    actor: typeof f.actor === 'string' ? f.actor : undefined,
+    actionType: typeof f.actionType === 'string' ? f.actionType : undefined,
+    riskLevel: typeof f.riskLevel === 'string' ? f.riskLevel as AuditFilters['riskLevel'] : undefined,
+    from: typeof f.from === 'number' ? f.from : undefined,
+    to: typeof f.to === 'number' ? f.to : undefined
+  }
 }
 
 // App info
@@ -197,10 +232,13 @@ ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
     })
   } catch {
     // Fallback: if wt.exe is not available (older Win10, enterprise), use PowerShell
+    // SECURITY: Escape single quotes in paths to prevent command injection
+    const escapedPath = task.worktreePath!.replace(/'/g, "''")
+    const escapedCli = cliPath.replace(/'/g, "''")
     await new Promise<void>((resolve, reject) => {
       execFile(
         'powershell',
-        ['-NoExit', '-Command', `Set-Location '${task.worktreePath}'; ${cliPath}`],
+        ['-NoExit', '-Command', `Set-Location '${escapedPath}'; &'${escapedCli}'`],
         { timeout: 5000 },
         (err) => { if (err) reject(err); else resolve() }
       )
@@ -209,7 +247,7 @@ ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
 })
 
 // Tasks
-ipcMain.handle('tasks:list', (_e, filters?: unknown) => tasks.list(filters as never))
+ipcMain.handle('tasks:list', (_e, filters?: unknown) => tasks.list(parseTaskFilters(filters)))
 ipcMain.handle('tasks:get', (_e, id: string) => tasks.get(id))
 ipcMain.handle('tasks:create', async (_e, input: TaskCreateInput) => taskManager.create(input))
 ipcMain.handle('tasks:createBatch', async (_e, input: import('@shared/types').TaskBatchCreateInput) => taskManager.createBatch(input))
@@ -272,9 +310,9 @@ ipcMain.handle('git:keep', (_e, taskId: string) => {
 })
 
 // Audit
-ipcMain.handle('audit:query', (_e, filters: unknown) => audit.query(filters as never))
+ipcMain.handle('audit:query', (_e, filters: unknown) => audit.query(parseAuditFilters(filters)))
 ipcMain.handle('audit:export', async (_e, filters: unknown, format: 'json' | 'csv') => {
-  const entries = audit.query(filters as never)
+  const entries = audit.query(parseAuditFilters(filters))
   if (format === 'json') return JSON.stringify(entries, null, 2)
   const header = 'timestamp,actor,action_type,risk_level,approval_status,task_id,session_id'
   const lines = entries.map((e) =>
@@ -285,7 +323,7 @@ ipcMain.handle('audit:export', async (_e, filters: unknown, format: 'json' | 'cs
   return [header, ...lines].join('\n')
 })
 ipcMain.handle('audit:getFilterOptions', () => {
-  const all = audit.query({} as never)
+  const all = audit.query({})
   return {
     actors: [...new Set(all.map((e) => e.actor))].sort(),
     actionTypes: [...new Set(all.map((e) => e.actionType))].sort(),

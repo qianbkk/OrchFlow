@@ -1,86 +1,22 @@
-import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
-import { BrowserWindow } from 'electron'
-import type { AgentEvent, Session, SessionConfig, SessionMode, SessionStatus, ToolCall } from '@shared/types'
+import type { AgentEvent, Session, SessionConfig, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
-import { getAgentBinaryPath } from './driver.registry'
 import { approvalGate } from '../core/approval-gate'
 import { checkpointManager } from '../core/checkpoint'
 import { TaskRepository } from '../db/repositories/task.repository'
+import {
+  buildChildEnv, sendPtyData, emit, setStatus,
+  DriverSessionManager, ptySpawnOptions, resolveCwd, createSession,
+  getAgentBinaryPath
+} from './driver-base'
 
-/** Env vars forwarded to the spawned CLI — never the whole process.env. */
-const ALLOWED_ENV_KEYS = new Set([
-  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR',
-  'TEMP', 'TMP', 'LANG', 'LC_ALL', 'LC_CTYPE',
-  'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
-  'TZ', 'LANG', 'SHELL',
-  // Windows Terminal specific
-  'WT_SESSION', 'WT_PROFILE_ID',
-  // Node / npm resolution
-  'NODE_PATH', 'NODE_OPTIONS', 'NPM_CONFIG_PREFIX',
-  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA'
-])
+/** ClaudeCodeDriver: Claude Code CLI integration.
+ *  Spawns `claude -p --output-format stream-json --verbose` with full
+ *  stream-json parsing, approval gate, and checkpoint integration. */
 
-function buildChildEnv(overrides: Record<string, string> = {}): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && ALLOWED_ENV_KEYS.has(k)) env[k] = v
-  }
-  // API key is injected by session-manager via overrides (read from keytar).
-  // Never read settingsStore directly — keys are not in the JSON file.
-  Object.assign(env, overrides)
-  return env
-}
-
-interface SessionState {
-  session: Session
-  pty: pty.IPty | null
-  subscribers: Set<(event: AgentEvent) => void>
-  buffer: string
-  cancelled: boolean
-  pendingApproval: Promise<boolean> | null
-  mode: SessionMode
-}
-
-const sessions = new Map<string, SessionState>()
-
-/** Targeted send to the first open window. Avoids broadcasting raw PTY
- *  data (which can include user keystrokes in interactive mode) to every
- *  BrowserWindow. Multi-window support would require tracking which window
- *  owns each session; for Phase 0 single-window this is correct. */
-function sendPtyData(sessionId: string, data: string): void {
-  const wins = BrowserWindow.getAllWindows()
-  if (wins.length === 0) return
-  try {
-    wins[0].webContents.send('pty:data', { sessionId, data })
-  } catch (err) {
-    console.warn('[claude-driver] pty:data send failed:', err)
-  }
-}
-
-function emit(state: SessionState, event: Omit<AgentEvent, 'sessionId'>): void {
-  const full: AgentEvent = { ...event, sessionId: state.session.id } as AgentEvent
-  for (const sub of state.subscribers) {
-    try {
-      sub(full)
-    } catch (err) {
-      console.error(`[claude-driver] subscriber error:`, err)
-    }
-  }
-}
-
-function setStatus(state: SessionState, status: SessionStatus): void {
-  if (state.session.status === status) return
-  state.session.status = status
-  emit(state, {
-    type: 'status_change',
-    timestamp: Date.now(),
-    content: status,
-    taskId: state.session.taskId,
-    status
-  })
-}
+const LABEL = 'claude-driver'
+const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
 
 /** Best-effort classification of a tool-use event into a ToolCall shape. */
 function toolCallFromEvent(obj: Record<string, unknown>): ToolCall | null {
@@ -91,14 +27,11 @@ function toolCallFromEvent(obj: Record<string, unknown>): ToolCall | null {
   const detail = input.command as string | undefined
   const filesAffected = Array.isArray(input.paths)
     ? (input.paths as unknown[]).map((p) => String(p))
-    : input.path
-      ? [String(input.path)]
-      : undefined
+    : input.path ? [String(input.path)] : undefined
   let type: ToolCall['type'] = 'other'
   if (/(delete|rm|rmdir|unlink|drop|truncate)/.test(name) || /rm\s+-rf|drop\s+table/.test(description)) {
     type = name.includes('rm') || name.includes('delete') || name.includes('unlink') || name.includes('rmdir')
-      ? 'file_delete'
-      : 'db_destructive'
+      ? 'file_delete' : 'db_destructive'
   } else if (/write|create|edit|patch|save/.test(name)) {
     type = 'file_write'
   } else if (/read|cat|view|fetch/.test(name)) {
@@ -111,199 +44,50 @@ function toolCallFromEvent(obj: Record<string, unknown>): ToolCall | null {
   return { type, description, detail, filesAffected }
 }
 
-function parseStreamJsonLine(state: SessionState, line: string): boolean {
-  if (!line.trim()) return false
-  try {
-    const obj = JSON.parse(line) as Record<string, unknown>
-    const eventType = (obj.type as string) ?? (obj.event as string) ?? 'output'
-    if (eventType === 'tool_use' || eventType === 'tool_call') {
-      const toolName = (obj.tool as string) ?? (obj.name as string) ?? 'unknown'
-      const toolCall = toolCallFromEvent(obj)
-      // For high-risk operations, request approval BEFORE emitting the
-      // event to the UI. The session moves to 'waiting_approval'.
-      const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
-      // SECURITY: If we can't parse the tool type (null), default to requiring
-      // approval — unknown tools should never silently bypass the gate.
-      const needsApproval = toolCall == null
-        ? true
-        : HIGH_RISK_TYPES.includes(toolCall.type)
-      // Create a fallback ToolCall for the null case so the approval UI
-      // has something to display.
-      const effectiveToolCall: ToolCall = toolCall ?? {
-        type: 'other',
-        description: `Unknown tool: ${toolName}`,
-        detail: JSON.stringify(obj).slice(0, 200)
-      }
-
-      emit(state, {
-        type: 'tool_call',
-        timestamp: Date.now(),
-        content: `Tool call: ${toolName}`,
-        taskId: state.session.taskId,
-        toolCall: effectiveToolCall
-      })
-
-      if (needsApproval && !state.cancelled) {
-        // PRD §3.4.3: "每次 Approval Gate 确认前自动创建" — snapshot the
-        // worktree before the high-risk operation runs so the user can
-        // always roll back even after approving.
-        if (state.session.taskId) {
-          try {
-            const task = new TaskRepository().get(state.session.taskId)
-            if (task?.worktreePath && existsSync(task.worktreePath)) {
-              void checkpointManager.create(
-                state.session.id,
-                state.session.taskId,
-                task.worktreePath,
-                'pre_approval',
-                `Before ${effectiveToolCall.type}: ${effectiveToolCall.description.slice(0, 80)}`
-              )
-            }
-          } catch (err) {
-            console.warn('[claude-driver] pre-approval checkpoint failed:', err)
-          }
-        }
-        setStatus(state, 'waiting_approval')
-        // Fire-and-forget: the result of approval drives the status, not the event emission
-        state.pendingApproval = approvalGate
-          .request(state.session.id, state.session.taskId ?? '', effectiveToolCall)
-          .then((approved) => {
-            state.pendingApproval = null
-            if (state.cancelled) return approved
-            setStatus(state, approved ? 'running' : 'error')
-            return approved
-          })
-          .catch((err) => {
-            console.error('[claude-driver] approval gate error:', err)
-            state.pendingApproval = null
-            return false
-          })
-      }
-      return true
-    }
-    if (eventType === 'tool_result') {
-      emit(state, {
-        type: 'tool_result',
-        timestamp: Date.now(),
-        content: typeof obj.content === 'string' ? obj.content : JSON.stringify(obj),
-        taskId: state.session.taskId
-      })
-      return true
-    }
-    if (eventType === 'done' || eventType === 'complete') {
-      setStatus(state, 'done')
-      emit(state, { type: 'done', timestamp: Date.now(), content: '', taskId: state.session.taskId })
-      return true
-    }
-    if (eventType === 'error') {
-      setStatus(state, 'error')
-      emit(state, {
-        type: 'error',
-        timestamp: Date.now(),
-        content: typeof obj.error === 'string' ? obj.error : JSON.stringify(obj),
-        taskId: state.session.taskId
-      })
-      return true
-    }
-    // Generic text content
-    const text = (obj.text as string) ?? (obj.content as string) ?? (obj.message as string) ?? ''
-    if (text) {
-      emit(state, {
-        type: 'output',
-        timestamp: Date.now(),
-        content: text,
-        taskId: state.session.taskId
-      })
-      return true
-    }
-    return false
-  } catch {
-    return false
-  }
-}
-
 export class ClaudeCodeDriver implements IAgentDriver {
   readonly type = 'claude' as const
+  private mgr = new DriverSessionManager(LABEL)
 
   async start(config: SessionConfig): Promise<Session> {
-    const session: Session = {
-      id: randomUUID(),
-      taskId: config.taskId,
-      agentType: this.type,
-      status: 'initializing',
-      mode: 'headless',
-      startedAt: Date.now()
-    }
-    const state: SessionState = {
-      session,
-      pty: null,
-      subscribers: new Set(),
-      buffer: '',
-      cancelled: false,
-      pendingApproval: null,
-      mode: 'headless'
-    }
-    sessions.set(session.id, state)
-
+    const session = createSession(config, this.type)
+    const state = this.mgr.create(session)
     const bin = getAgentBinaryPath(this.type)
-    const cwd = existsSync(config.worktreePath) ? config.worktreePath : process.cwd()
-    const env = buildChildEnv(config.env)
+    const cwd = resolveCwd(config.worktreePath)
+    // API key is injected by session-manager via overrides (read from keytar).
+    const env = buildChildEnv([], config.env)
 
     let ptyProc: pty.IPty
     try {
-      ptyProc = pty.spawn(bin, ['-p', config.prompt, '--output-format', 'stream-json', '--verbose'], {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
-        cwd,
-        env
-      })
+      ptyProc = pty.spawn(bin, ['-p', config.prompt, '--output-format', 'stream-json', '--verbose'], ptySpawnOptions(cwd, env))
     } catch (err) {
-      setStatus(state, 'error')
-      emit(state, {
-        type: 'error',
-        timestamp: Date.now(),
+      setStatus(state, 'error', LABEL)
+      emit(state, { type: 'error', timestamp: Date.now(),
         content: `Failed to spawn ${bin}: ${err instanceof Error ? err.message : String(err)}`,
-        taskId: state.session.taskId
-      })
-      // Clean up immediately so the entry doesn't linger
-      sessions.delete(session.id)
+        taskId: session.taskId }, LABEL)
+      this.mgr.delete(session.id)
       return session
     }
 
     state.pty = ptyProc
     state.session.pid = ptyProc.pid
-    setStatus(state, 'running')
+    setStatus(state, 'running', LABEL)
 
     ptyProc.onData((data: string) => {
-      if (state.mode === 'interactive') {
-        // PRD §3.5.2 + §11.3: In Interactive mode, stop parsing stream-json
-        // and pipe raw bytes straight to the renderer's xterm.js. The same
-        // PTY process is reused — no restart, no lost state.
-        // Use targeted send (not broadcast) to avoid leaking keystrokes
-        // to every open BrowserWindow.
-        sendPtyData(state.session.id, data)
-        return
-      }
+      if (state.mode === 'interactive') { sendPtyData(session.id, data, LABEL); return }
       state.buffer += data
       const lines = state.buffer.split('\n')
       state.buffer = lines.pop() ?? ''
       for (const line of lines) {
         if (!line.trim()) continue
-        if (!parseStreamJsonLine(state, line)) {
-          emit(state, {
-            type: 'output',
-            timestamp: Date.now(),
-            content: line,
-            taskId: state.session.taskId
-          })
+        if (!this.parseStreamJsonLine(state, line)) {
+          emit(state, { type: 'output', timestamp: Date.now(), content: line, taskId: session.taskId }, LABEL)
         }
       }
     })
 
     ptyProc.onExit(({ exitCode }) => {
       if (state.session.status === 'running' || state.session.status === 'initializing') {
-        setStatus(state, exitCode === 0 ? 'done' : 'error')
+        setStatus(state, exitCode === 0 ? 'done' : 'error', LABEL)
       }
       state.pty = null
     })
@@ -311,115 +95,92 @@ export class ClaudeCodeDriver implements IAgentDriver {
     return session
   }
 
-  async stop(sessionId: string, mode: 'graceful' | 'force'): Promise<void> {
-    const state = sessions.get(sessionId)
-    if (!state) return
-    state.cancelled = true
-    const ptyToKill = state.pty
-    state.pty = null
-    if (ptyToKill) {
-      try {
-        if (mode === 'force') {
-          ptyToKill.kill('SIGKILL')
-        } else {
-          // Send Ctrl-C and wait
-          ptyToKill.write('\x03')
-          setTimeout(() => {
-            try { ptyToKill.kill('SIGTERM') } catch { /* already gone */ }
-          }, 2000)
+  private parseStreamJsonLine(state: ReturnType<DriverSessionManager['create']>, line: string): boolean {
+    try {
+      const obj = JSON.parse(line) as Record<string, unknown>
+      const eventType = (obj.type as string) ?? (obj.event as string) ?? 'output'
+
+      if (eventType === 'tool_use' || eventType === 'tool_call') {
+        const toolName = (obj.tool as string) ?? (obj.name as string) ?? 'unknown'
+        const toolCall = toolCallFromEvent(obj)
+        // SECURITY: unknown tools default to requiring approval
+        const needsApproval = toolCall == null ? true : HIGH_RISK_TYPES.includes(toolCall.type)
+        const effectiveToolCall: ToolCall = toolCall ?? {
+          type: 'other', description: `Unknown tool: ${toolName}`,
+          detail: JSON.stringify(obj).slice(0, 200)
         }
-      } catch (err) {
-        console.error(`[claude-driver] stop failed:`, err)
+
+        emit(state, { type: 'tool_call', timestamp: Date.now(), content: `Tool call: ${toolName}`,
+          taskId: state.session.taskId, toolCall: effectiveToolCall }, LABEL)
+
+        if (needsApproval && !state.cancelled) {
+          // PRD §3.4.3: auto-checkpoint before high-risk operations
+          if (state.session.taskId) {
+            try {
+              const task = new TaskRepository().get(state.session.taskId)
+              if (task?.worktreePath && existsSync(task.worktreePath)) {
+                void checkpointManager.create(state.session.id, state.session.taskId,
+                  task.worktreePath, 'pre_approval',
+                  `Before ${effectiveToolCall.type}: ${effectiveToolCall.description.slice(0, 80)}`)
+              }
+            } catch (err) { console.warn(`[${LABEL}] pre-approval checkpoint failed:`, err) }
+          }
+          setStatus(state, 'waiting_approval', LABEL)
+          state.pendingApproval = approvalGate
+            .request(state.session.id, state.session.taskId ?? '', effectiveToolCall)
+            .then((approved) => {
+              state.pendingApproval = null
+              if (state.cancelled) return approved
+              setStatus(state, approved ? 'running' : 'error', LABEL)
+              return approved
+            })
+            .catch((err) => {
+              console.error(`[${LABEL}] approval gate error:`, err)
+              state.pendingApproval = null
+              return false
+            })
+        }
+        return true
       }
-    }
-    setStatus(state, 'done')
-    sessions.delete(sessionId)
-  }
 
-  async pause(_sessionId: string): Promise<void> {
-    // Windows ConPTY doesn't support SIGSTOP; UI shows "pause" by simply not auto-approving new tool calls
-    // Real pause semantics in MVP: only meaningful for approval gating, not for the OS process
-  }
-
-  async resume(_sessionId: string): Promise<void> {
-    // Same as above — for Phase 0 MVP, resume is a UI state change
-  }
-
-  async send(sessionId: string, message: string): Promise<void> {
-    const state = sessions.get(sessionId)
-    if (state?.pty) {
-      state.pty.write(`${message}\r`)
-    }
-  }
-
-  /** Switch a session between headless (structured stream-json) and interactive
-   *  (raw pty passthrough) modes. The underlying PTY process is NOT restarted
-   *  — only the routing of onData bytes changes (PRD §11.3). */
-  switchMode(sessionId: string, newMode: SessionMode): void {
-    const state = sessions.get(sessionId)
-    if (!state || state.mode === newMode) return
-    if (newMode === 'interactive') {
-      // Flush any partial line in the headless buffer so the user sees
-      // the last bit of output before the mode switch.
-      if (state.buffer) {
-        sendPtyData(sessionId, state.buffer)
-        state.buffer = ''
+      if (eventType === 'tool_result') {
+        emit(state, { type: 'tool_result', timestamp: Date.now(),
+          content: typeof obj.content === 'string' ? obj.content : JSON.stringify(obj),
+          taskId: state.session.taskId }, LABEL)
+        return true
       }
-    } else {
-      // Switching back to headless — drop any partial state. Rare path.
-      state.buffer = ''
-    }
-    state.mode = newMode
-    state.session.mode = newMode
-    emit(state, {
-      type: 'status_change',
-      timestamp: Date.now(),
-      content: newMode,
-      taskId: state.session.taskId,
-      status: state.session.status
-    })
-  }
-
-  /** Write raw keystrokes from the renderer's xterm.js to the PTY.
-   *  Used in interactive mode (PRD §3.5.2). */
-  ptyInput(sessionId: string, data: string): void {
-    const state = sessions.get(sessionId)
-    if (state?.pty && state.mode === 'interactive') {
-      state.pty.write(data)
-    }
-  }
-
-  /** Forward renderer-side resize events to the PTY so the agent CLI sees
-   *  the correct COLUMNS/LINES. */
-  ptyResize(sessionId: string, cols: number, rows: number): void {
-    const state = sessions.get(sessionId)
-    if (state?.pty) {
-      try {
-        state.pty.resize(cols, rows)
-      } catch (err) {
-        console.warn('[claude-driver] resize failed:', err)
+      if (eventType === 'done' || eventType === 'complete') {
+        setStatus(state, 'done', LABEL)
+        emit(state, { type: 'done', timestamp: Date.now(), content: '', taskId: state.session.taskId }, LABEL)
+        return true
       }
+      if (eventType === 'error') {
+        setStatus(state, 'error', LABEL)
+        emit(state, { type: 'error', timestamp: Date.now(),
+          content: typeof obj.error === 'string' ? obj.error : JSON.stringify(obj),
+          taskId: state.session.taskId }, LABEL)
+        return true
+      }
+
+      const text = (obj.text as string) ?? (obj.content as string) ?? (obj.message as string) ?? ''
+      if (text) {
+        emit(state, { type: 'output', timestamp: Date.now(), content: text, taskId: state.session.taskId }, LABEL)
+        return true
+      }
+      return false
+    } catch {
+      return false
     }
   }
 
-  subscribe(sessionId: string, handler: (event: AgentEvent) => void): () => void {
-    const state = sessions.get(sessionId)
-    if (!state) {
-      // Emit a synthetic error so the UI can show something
-      handler({
-        type: 'error',
-        timestamp: Date.now(),
-        sessionId,
-        content: `No session with id ${sessionId}`,
-        taskId: ''
-      })
-      return () => undefined
-    }
-    state.subscribers.add(handler)
-    return () => {
-      state.subscribers.delete(handler)
-    }
-  }
+  async stop(sessionId: string, mode: 'graceful' | 'force'): Promise<void> { return this.mgr.stop(sessionId, mode) }
+  async pause(): Promise<void> {} // Windows ConPTY doesn't support SIGSTOP
+  async resume(): Promise<void> {}
+  async send(sessionId: string, message: string): Promise<void> { return this.mgr.send(sessionId, message) }
+  switchMode(sessionId: string, newMode: import('@shared/types').SessionMode): void { this.mgr.switchMode(sessionId, newMode) }
+  ptyInput(sessionId: string, data: string): void { this.mgr.ptyInput(sessionId, data) }
+  ptyResize(sessionId: string, cols: number, rows: number): void { this.mgr.ptyResize(sessionId, cols, rows) }
+  subscribe(sessionId: string, handler: (event: AgentEvent) => void): () => void { return this.mgr.subscribe(sessionId, handler) }
 }
 
 // Re-export the IPty type for downstream usage

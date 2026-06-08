@@ -1,13 +1,11 @@
-import type { PipelineGraph, PipelineNode, PipelineEdge, PipelineStatus, TaskStatus } from '@shared/types'
+import type { PipelineGraph, PipelineNode, PipelineEdge, PipelineStatus } from '@shared/types'
 import { TaskRepository } from '../db/repositories/task.repository'
 import { TaskDependencyRepository } from '../db/repositories/dependency.repository'
-import { SessionRepository } from '../db/repositories/session.repository'
 import { messageBus } from './message-bus'
 import { broadcast } from './broadcast'
 
 const taskRepo = new TaskRepository()
 const depRepo = new TaskDependencyRepository()
-const sessionRepo = new SessionRepository()
 
 /** Per-project pipeline state */
 const pipelineStates = new Map<string, { status: PipelineStatus; running: boolean }>()
@@ -185,7 +183,6 @@ function computeTopologicalLevels(
   depMap: Map<string, string[]>
 ): Map<string, number> {
   const levels = new Map<string, number>()
-  const taskIds = new Set(tasks.map((t) => t.id))
 
   // Initialize: tasks with no dependencies get level 0
   const queue: string[] = []

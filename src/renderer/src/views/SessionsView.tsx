@@ -16,7 +16,6 @@ import {
 import type { AgentEvent, DetectedAgent, Session, SessionMode, SessionStatus } from '@shared/types'
 import { TerminalPane } from '../components/TerminalPane'
 import { useSessionsStore } from '../stores/sessions.store'
-import { useRefreshOn } from '../hooks/useRefreshOn'
 import { CheckpointTimeline } from '../components/CheckpointTimeline'
 
 const STATUS_ICON: Record<SessionStatus, React.ComponentType<{ size?: number; className?: string }>> = {

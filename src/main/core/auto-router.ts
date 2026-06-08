@@ -1,4 +1,4 @@
-import type { AgentType, Task, TaskStatus } from '@shared/types'
+import type { AgentType, Task } from '@shared/types'
 import { TaskRepository } from '../db/repositories/task.repository'
 import { SessionRepository } from '../db/repositories/session.repository'
 import { AUTO_ROUTER_WEIGHTS } from '@shared/constants'

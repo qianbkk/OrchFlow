@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
 import type { Task, DiffResult } from '@shared/types'
 import { Modal } from './Modal'
 

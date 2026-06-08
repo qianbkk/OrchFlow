@@ -22,11 +22,6 @@ export class NotificationRepository extends Repository {
     return rows.map(rowToNotification)
   }
 
-  unreadCount(): number {
-    const row = this.db.prepare('SELECT COUNT(*) as c FROM notifications WHERE read = 0').get() as { c: number }
-    return row.c
-  }
-
   create(n: Omit<Notification, 'id'>): number {
     const result = this.db
       .prepare(

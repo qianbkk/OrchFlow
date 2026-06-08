@@ -36,7 +36,7 @@ export class AgentMessageRepository extends Repository {
 
   list(taskId?: string, delivered?: boolean): AgentMessage[] {
     let sql = 'SELECT * FROM agent_messages WHERE 1=1'
-    const params: unknown[] = []
+    const params: (string | number)[] = []
     if (taskId) {
       sql += ' AND task_id = ?'
       params.push(taskId)

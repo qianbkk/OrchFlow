@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import type { PipelineGraph, PipelineNode, PipelineEdge } from '@shared/types'
+import type { PipelineGraph, PipelineNode } from '@shared/types'
 import { PIPELINE_LAYOUT } from '@shared/constants'
 import { useUiStore } from '../stores/ui.store'
 import { Play, Pause, RotateCcw } from 'lucide-react'

@@ -79,10 +79,6 @@ export async function mergeWorktree(task: Task): Promise<void> {
   await mainGit.raw(['merge', '--no-ff', task.branchName])
 }
 
-export async function keepWorktree(_task: Task): Promise<void> {
-  // Just mark as done; worktree remains on disk for archival
-}
-
 export async function getWorktreeDiff(worktreePath: string): Promise<DiffResult> {
   const git = simpleGit(worktreePath)
   const summary = { added: 0, removed: 0, modified: 0 }

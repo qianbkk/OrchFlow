@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { TaskCreateInput, TaskBatchCreateInput, TaskPlanInput, TaskImportInput, AgentType, TaskMode, AssignmentMode } from '@shared/types'
+import type { TaskCreateInput, TaskBatchCreateInput, TaskImportInput, AgentType, TaskMode } from '@shared/types'
 import type { DetectedAgent } from '@shared/types'
 import { Modal } from './Modal'
 
@@ -217,7 +217,7 @@ function ListTab({ projectId, installedAgents, submitting, setSubmitting, error,
     try {
       // Parse lines: each line is a task, optional `> dep1, dep2` syntax for dependencies
       const lines = text.trim().split('\n').filter((l) => l.trim())
-      const parsedTasks = lines.map((line, idx) => {
+      const parsedTasks = lines.map((line) => {
         const depMatch = line.match(/^(.+?)\s*>\s*(.+)$/)
         if (depMatch) {
           return { title: depMatch[1].trim(), deps: depMatch[2].split(',').map((s) => s.trim()) }

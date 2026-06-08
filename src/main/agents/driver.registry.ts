@@ -46,8 +46,11 @@ export function getAgentBinaryPath(type: AgentType): string {
 
 async function probeVersion(bin: string): Promise<string | undefined> {
   try {
+    // SECURITY: shell: false prevents command injection via user-configured
+    // executable paths. The bin path is already resolved to a real file by
+    // findOnPath/findNpmGlobalBinary (includes .cmd on Windows).
     const { stdout } = await execFileP(bin, ['--version'], {
-      shell: true,
+      shell: false,
       windowsHide: true,
       timeout: 5000
     })
