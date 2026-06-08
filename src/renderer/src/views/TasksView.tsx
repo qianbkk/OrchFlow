@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, FolderOpen, GitMerge } from 'lucide-react'
-import type { Project, Task } from '@shared/types'
+import { Plus, FolderOpen, GitMerge, List, Columns3 } from 'lucide-react'
+import type { Project, Task, TaskStatus } from '@shared/types'
 import { TaskCreateDialog } from '../components/TaskCreateDialog'
 import { DiffViewer } from '../components/DiffViewer'
+import { KanbanBoard } from '../components/KanbanBoard'
 import { StatusPill } from '../components/StatusPill'
+import { useUiStore } from '../stores/ui.store'
 
 export function TasksView(): React.JSX.Element {
   const [project, setProject] = useState<Project | null>(null)
@@ -12,6 +14,8 @@ export function TasksView(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [openProjectDialog, setOpenProjectDialog] = useState(false)
   const [diffTask, setDiffTask] = useState<Task | null>(null)
+  const viewMode = useUiStore((s) => s.taskViewMode)
+  const setViewMode = useUiStore((s) => s.setTaskViewMode)
 
   const reload = async (): Promise<void> => {
     try {
@@ -74,15 +78,70 @@ export function TasksView(): React.JSX.Element {
           <h2 className="font-semibold">{project.name}</h2>
           <p className="text-xs text-[var(--color-text-2)]">{project.rootPath}</p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
-          <Plus size={14} />
-          New Task
-        </button>
+        <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="flex items-center rounded border border-[var(--color-border-1)] bg-[var(--color-bg-1)]">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${
+                viewMode === 'list' ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-2)] hover:text-[var(--color-text-1)]'
+              }`}
+              title="List view"
+            >
+              <List size={14} />
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${
+                viewMode === 'kanban' ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-2)] hover:text-[var(--color-text-1)]'
+              }`}
+              title="Kanban board"
+            >
+              <Columns3 size={14} />
+            </button>
+          </div>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+          >
+            <Plus size={14} />
+            New Task
+          </button>
+        </div>
       </div>
 
+      {/* Kanban Board View */}
+      {viewMode === 'kanban' && (
+        <div className="flex-1 overflow-hidden">
+          {tasks.length === 0 ? (
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="rounded-lg border border-dashed border-[var(--color-border-1)] p-12 text-center">
+                <p className="text-sm text-[var(--color-text-2)]">
+                  No tasks yet. Click <span className="font-medium text-[var(--color-text-0)]">New Task</span> to create the first one.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <KanbanBoard
+              tasks={tasks}
+              onStatusChange={async (taskId, status) => {
+                try {
+                  await window.orchflow.tasks.updateStatus(taskId, status)
+                  await reload()
+                } catch (err) {
+                  console.error('[TasksView] status update failed:', err)
+                }
+              }}
+              onSelect={(task) => {
+                if (task.worktreePath) setDiffTask(task)
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* List View */}
+      {viewMode === 'list' && (
       <div className="flex-1 overflow-auto p-6">
         {tasks.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[var(--color-border-1)] p-12 text-center">
@@ -136,6 +195,7 @@ export function TasksView(): React.JSX.Element {
           </ul>
         )}
       </div>
+      )}
 
       {showCreate && project && (
         <TaskCreateDialog

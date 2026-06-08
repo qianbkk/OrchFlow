@@ -40,9 +40,9 @@ export const AGENT_DEFAULTS: Record<
   },
   copilot: {
     displayName: 'GitHub Copilot CLI',
-    cliBinary: 'copilot',
-    detect: ['copilot.cmd', 'copilot.exe', 'copilot'],
-    package: '@github/copilot'
+    cliBinary: 'gh',
+    detect: ['gh.cmd', 'gh.exe', 'gh'],
+    package: '@githubnext/github-copilot-cli'
   }
 }
 
@@ -59,3 +59,45 @@ export const PROJECT_KEYTAR_SERVICE = 'OrchFlow'
 export const KEYTAR_KEYS = {
   API_KEY_PREFIX: 'apiKey:'
 } as const
+
+// ===== Phase 1/2 Constants =====
+
+// Kanban board columns (maps to TaskStatus)
+export const KANBAN_COLUMNS = [
+  { key: 'queued', label: 'Queued', statuses: ['created', 'queued', 'assigned'] as const },
+  { key: 'running', label: 'Running', statuses: ['running', 'paused'] as const },
+  { key: 'review', label: 'Review', statuses: ['pending_review'] as const },
+  { key: 'done', label: 'Done', statuses: ['done', 'failed', 'cancelled'] as const }
+] as const
+
+// Pipeline DAG visualization
+export const PIPELINE_LAYOUT = {
+  NODE_WIDTH: 180,
+  NODE_HEIGHT: 60,
+  NODE_GAP_X: 80,
+  NODE_GAP_Y: 40,
+  PADDING: 40
+} as const
+
+// Default message config for task dependencies
+export const DEFAULT_MESSAGE_CONFIG: import('./types').MessageConfig = {
+  trigger: 'on_task_done',
+  contentTypes: ['text', 'diff'],
+  receiveAction: 'auto_continue'
+}
+
+// Auto-router scoring weights
+export const AUTO_ROUTER_WEIGHTS = {
+  IDLE_BONUS: 10,
+  RUNNING_PENALTY: 5,
+  CAPABILITY_MATCH_BONUS: 8,
+  LAST_SUCCESS_BONUS: 3
+} as const
+
+// File import supported formats
+export const FILE_IMPORT_FILTERS = [
+  { name: 'Task Files', extensions: ['md', 'json', 'txt'] },
+  { name: 'Markdown', extensions: ['md'] },
+  { name: 'JSON', extensions: ['json'] },
+  { name: 'Text', extensions: ['txt'] }
+] as const

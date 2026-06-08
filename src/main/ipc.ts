@@ -212,8 +212,18 @@ ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
 ipcMain.handle('tasks:list', (_e, filters?: unknown) => tasks.list(filters as never))
 ipcMain.handle('tasks:get', (_e, id: string) => tasks.get(id))
 ipcMain.handle('tasks:create', async (_e, input: TaskCreateInput) => taskManager.create(input))
+ipcMain.handle('tasks:createBatch', async (_e, input: import('@shared/types').TaskBatchCreateInput) => taskManager.createBatch(input))
+ipcMain.handle('tasks:createFromPlan', async (_e, input: import('@shared/types').TaskPlanInput) => taskManager.createFromPlan(input))
+ipcMain.handle('tasks:importFromFile', async (_e, input: import('@shared/types').TaskImportInput) => taskManager.importFromFile(input))
 ipcMain.handle('tasks:cancel', async (_e, taskId: string) => taskManager.cancel(taskId))
 ipcMain.handle('tasks:retry', async (_e, taskId: string) => taskManager.retry(taskId))
+ipcMain.handle('tasks:updateStatus', (_e, taskId: string, status: import('@shared/types').TaskStatus) =>
+  taskManager.updateStatus(taskId, status))
+ipcMain.handle('tasks:getDependencies', (_e, taskId: string) => taskManager.getDependencies(taskId))
+ipcMain.handle('tasks:addDependency', (_e, taskId: string, dependsOnTaskId: string, config?: import('@shared/types').MessageConfig) =>
+  taskManager.addDependency(taskId, dependsOnTaskId, config))
+ipcMain.handle('tasks:removeDependency', (_e, taskId: string, dependsOnTaskId: string) =>
+  taskManager.removeDependency(taskId, dependsOnTaskId))
 
 // Approval
 ipcMain.handle('approval:queue', () => sessionManager.getApprovalQueue())
@@ -221,6 +231,9 @@ ipcMain.handle('approval:approve', (_e, requestId: string) => sessionManager.app
 ipcMain.handle('approval:reject', (_e, requestId: string) => sessionManager.reject(requestId))
 ipcMain.handle('approval:batchApprove', (_e, requestIds: string[]) => {
   for (const id of requestIds) sessionManager.approve(id)
+})
+ipcMain.handle('approval:batchReject', (_e, requestIds: string[]) => {
+  for (const id of requestIds) sessionManager.reject(id)
 })
 
 // Checkpoints
@@ -271,6 +284,14 @@ ipcMain.handle('audit:export', async (_e, filters: unknown, format: 'json' | 'cs
   )
   return [header, ...lines].join('\n')
 })
+ipcMain.handle('audit:getFilterOptions', () => {
+  const all = audit.query({} as never)
+  return {
+    actors: [...new Set(all.map((e) => e.actor))].sort(),
+    actionTypes: [...new Set(all.map((e) => e.actionType))].sort(),
+    riskLevels: [...new Set(all.map((e) => e.riskLevel).filter(Boolean))]
+  }
+})
 
 // Notifications
 ipcMain.handle('notifications:list', () => notifications.list())
@@ -285,6 +306,57 @@ ipcMain.handle('dialog:openDirectory', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
+})
+ipcMain.handle('dialog:openFile', async (_e, filters?: Array<{ name: string; extensions: string[] }>) => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select file to import',
+    properties: ['openFile'],
+    buttonLabel: 'Select',
+    filters: filters ?? [{ name: 'All Files', extensions: ['*'] }]
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+
+// Pipeline
+ipcMain.handle('pipeline:start', async (_e, projectId: string) => {
+  const { pipelineEngine } = await import('./core/pipeline-engine')
+  return pipelineEngine.start(projectId)
+})
+ipcMain.handle('pipeline:pause', async (_e, projectId: string) => {
+  const { pipelineEngine } = await import('./core/pipeline-engine')
+  return pipelineEngine.pause(projectId)
+})
+ipcMain.handle('pipeline:resume', async (_e, projectId: string) => {
+  const { pipelineEngine } = await import('./core/pipeline-engine')
+  return pipelineEngine.resume(projectId)
+})
+ipcMain.handle('pipeline:getGraph', async (_e, projectId: string) => {
+  const { pipelineEngine } = await import('./core/pipeline-engine')
+  return pipelineEngine.getGraph(projectId)
+})
+ipcMain.handle('pipeline:getStatus', async (_e, projectId: string) => {
+  const { pipelineEngine } = await import('./core/pipeline-engine')
+  return pipelineEngine.getStatus(projectId)
+})
+
+// Message Bus
+ipcMain.handle('messageBus:publish', async (_e, fromSessionId: string, toTaskId: string, message: unknown) => {
+  const { messageBus } = await import('./core/message-bus')
+  const m = message as { messageType: string; content: string }
+  return messageBus.publish(fromSessionId, toTaskId, m.messageType as import('@shared/types').AgentMessageType, m.content)
+})
+ipcMain.handle('messageBus:list', async (_e, taskId?: string, delivered?: boolean) => {
+  const { messageBus } = await import('./core/message-bus')
+  return messageBus.list(taskId, delivered)
+})
+ipcMain.handle('messageBus:markDelivered', async (_e, messageId: string) => {
+  const { messageBus } = await import('./core/message-bus')
+  return messageBus.markDelivered(messageId)
+})
+ipcMain.handle('messageBus:consumeForTask', async (_e, taskId: string) => {
+  const { messageBus } = await import('./core/message-bus')
+  return messageBus.consume(taskId)
 })
 
 export function registerIpcHandlers(): void {

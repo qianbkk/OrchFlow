@@ -112,6 +112,57 @@ export interface TaskCreateInput {
   agentType?: AgentType
   approvalPolicy?: PermissionPolicy
   persistOnClose?: boolean
+  /** Mode B: dependency task IDs */
+  dependsOn?: string[]
+  /** Mode B: per-dependency message config */
+  dependencyMessageConfig?: Record<string, MessageConfig>
+}
+
+/** Batch creation input for broadcast/divide modes */
+export interface TaskBatchCreateInput {
+  projectId: string
+  mode: 'broadcast' | 'divide'
+  /** For broadcast: same description sent to multiple agents */
+  description?: string
+  /** For divide: sub-tasks with their own descriptions */
+  subtasks?: Array<{ title: string; description?: string; agentType?: AgentType }>
+  /** Agents to use (broadcast mode sends to all listed) */
+  agentTypes: AgentType[]
+  assignmentMode: AssignmentMode
+}
+
+/** Mode C: Agent-generated plan for task decomposition */
+export interface TaskPlanInput {
+  projectId: string
+  goal: string
+  planningAgent: AgentType
+  /** JSON output from the planning agent */
+  planJson?: string
+}
+
+/** Mode D: File import input */
+export interface TaskImportInput {
+  projectId: string
+  filePath: string
+  format: 'markdown' | 'json' | 'text'
+  assignmentMode: AssignmentMode
+  agentType?: AgentType
+}
+
+/** Configuration for how messages flow between dependent tasks */
+export interface MessageConfig {
+  /** When to send the message */
+  trigger: 'on_task_done' | 'on_checkpoint' | 'manual'
+  /** What types of content to include */
+  contentTypes: AgentMessageType[]
+  /** How the receiving agent should handle it */
+  receiveAction: 'auto_continue' | 'wait_confirm' | 'record_only'
+}
+
+export interface TaskDependency {
+  taskId: string
+  dependsOnTaskId: string
+  messageConfigJson?: string
 }
 
 export interface TaskFilters {
@@ -282,6 +333,8 @@ export interface OrchFlowAPI {
   audit: AuditAPI
   notifications: NotificationsAPI
   dialog: DialogAPI
+  pipeline: PipelineAPI
+  messageBus: MessageBusAPI
   on(channel: string, listener: (payload: unknown) => void): () => void
 }
 
@@ -321,9 +374,16 @@ export interface SessionsAPI {
 export interface TasksAPI {
   list(filters?: TaskFilters): Promise<Task[]>
   create(input: TaskCreateInput): Promise<Task>
+  createBatch(input: TaskBatchCreateInput): Promise<Task[]>
+  createFromPlan(input: TaskPlanInput): Promise<Task[]>
+  importFromFile(input: TaskImportInput): Promise<Task[]>
   cancel(taskId: string): Promise<void>
   retry(taskId: string): Promise<void>
   get(taskId: string): Promise<Task | null>
+  updateStatus(taskId: string, status: TaskStatus): Promise<void>
+  getDependencies(taskId: string): Promise<TaskDependency[]>
+  addDependency(taskId: string, dependsOnTaskId: string, config?: MessageConfig): Promise<void>
+  removeDependency(taskId: string, dependsOnTaskId: string): Promise<void>
 }
 
 export interface ApprovalAPI {
@@ -331,6 +391,7 @@ export interface ApprovalAPI {
   approve(requestId: string): Promise<void>
   reject(requestId: string): Promise<void>
   batchApprove(requestIds: string[]): Promise<void>
+  batchReject(requestIds: string[]): Promise<void>
 }
 
 export interface CheckpointsAPI {
@@ -350,6 +411,13 @@ export interface GitAPI {
 export interface AuditAPI {
   query(filters: AuditFilters): Promise<AuditEntry[]>
   export(filters: AuditFilters, format: 'json' | 'csv'): Promise<string>
+  getFilterOptions(): Promise<AuditFilterOptions>
+}
+
+export interface AuditFilterOptions {
+  actors: string[]
+  actionTypes: string[]
+  riskLevels: RiskLevel[]
 }
 
 export interface NotificationsAPI {
@@ -359,4 +427,51 @@ export interface NotificationsAPI {
 
 export interface DialogAPI {
   openDirectory(): Promise<string | null>
+  openFile(filters?: FileFilter[]): Promise<string | null>
+}
+
+export interface FileFilter {
+  name: string
+  extensions: string[]
+}
+
+// ===== Pipeline API =====
+export type PipelineStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed'
+
+export interface PipelineNode {
+  taskId: string
+  task: Task
+  dependencies: string[]
+  status: TaskStatus
+  level: number // topological layer for DAG layout
+  x?: number // computed x position for visualization
+  y?: number // computed y position for visualization
+}
+
+export interface PipelineEdge {
+  fromTaskId: string
+  toTaskId: string
+  messageConfig?: MessageConfig
+}
+
+export interface PipelineGraph {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
+  status: PipelineStatus
+}
+
+export interface PipelineAPI {
+  start(projectId: string): Promise<void>
+  pause(projectId: string): Promise<void>
+  resume(projectId: string): Promise<void>
+  getGraph(projectId: string): Promise<PipelineGraph>
+  getStatus(projectId: string): Promise<PipelineStatus>
+}
+
+// ===== Message Bus API =====
+export interface MessageBusAPI {
+  publish(fromSessionId: string, toTaskId: string, message: Omit<AgentMessage, 'id' | 'timestamp' | 'delivered'>): Promise<AgentMessage>
+  list(taskId?: string, delivered?: boolean): Promise<AgentMessage[]>
+  markDelivered(messageId: string): Promise<void>
+  consumeForTask(taskId: string): Promise<AgentMessage[]>
 }

@@ -1,17 +1,27 @@
 import { create } from 'zustand'
 
-export type ViewKey = 'sessions' | 'tasks' | 'audit' | 'settings'
+export type ViewKey = 'sessions' | 'tasks' | 'pipeline' | 'audit' | 'settings'
 
 interface UiState {
   activeView: ViewKey
-  setActiveView: (v: ViewKey) => void
   sidebarCollapsed: boolean
+  /** Currently active project ID for multi-project filtering */
+  activeProjectId: string | null
+  /** Task view mode: list or kanban board */
+  taskViewMode: 'list' | 'kanban'
+  setActiveView: (v: ViewKey) => void
   toggleSidebar: () => void
+  setActiveProjectId: (id: string | null) => void
+  setTaskViewMode: (mode: 'list' | 'kanban') => void
 }
 
 export const useUiStore = create<UiState>((set) => ({
   activeView: 'sessions',
-  setActiveView: (v) => set({ activeView: v }),
   sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed }))
+  activeProjectId: null,
+  taskViewMode: 'list',
+  setActiveView: (v) => set({ activeView: v }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setActiveProjectId: (id) => set({ activeProjectId: id }),
+  setTaskViewMode: (mode) => set({ taskViewMode: mode })
 }))

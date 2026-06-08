@@ -24,6 +24,7 @@ describe('sessions.store.applyEvent', () => {
     const log = useSessionsStore.getState().byId['sess-1']
     expect(log).toBeDefined()
     expect(log.lines).toEqual(['hello'])
+    expect(log.fullLines).toEqual(['hello'])
     expect(log.agentType).toBe('claude')
     expect(log.status).toBe('idle')
   })

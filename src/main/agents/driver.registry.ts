@@ -6,21 +6,21 @@ import { AGENT_DEFAULTS } from '@shared/constants'
 import type { AgentType, DetectedAgent } from '@shared/types'
 import { settingsStore } from '../core/settings-store'
 import { ClaudeCodeDriver } from './claude-code.driver'
-import { StubDriver } from './stub.driver'
+import { CodexDriver } from './codex.driver'
+import { CopilotDriver } from './copilot.driver'
 import type { IAgentDriver } from './driver.interface'
 
 const execFileP = promisify(execFile)
 
-// Order matters: P0 claude first, then codex (P1), then copilot (P2)
+// All three drivers are now real implementations (Phase 0: Claude, Phase 1: Codex, Phase 2: Copilot)
 const drivers: Map<AgentType, IAgentDriver> = new Map()
 let initialized = false
 
 function registerDefaults(): void {
   if (initialized) return
   drivers.set('claude', new ClaudeCodeDriver())
-  // Phase 1+ — explicit stubs that surface "not implemented" via an error event
-  drivers.set('codex', new StubDriver('codex', 'Phase 1'))
-  drivers.set('copilot', new StubDriver('copilot', 'Phase 2'))
+  drivers.set('codex', new CodexDriver())
+  drivers.set('copilot', new CopilotDriver())
   initialized = true
 }
 

@@ -9,14 +9,25 @@ import type {
   Session,
   Task,
   TaskCreateInput,
+  TaskBatchCreateInput,
+  TaskPlanInput,
+  TaskImportInput,
   TaskFilters,
+  TaskStatus,
+  TaskDependency,
+  MessageConfig,
   ApprovalRequest,
   Checkpoint,
   SessionConfig,
   AuditEntry,
   AuditFilters,
+  AuditFilterOptions,
   Notification,
-  DiffResult
+  DiffResult,
+  PipelineGraph,
+  PipelineStatus,
+  AgentMessage,
+  FileFilter
 } from '../shared/types'
 
 // API surface exposed to the renderer as window.orchflow
@@ -67,9 +78,20 @@ const api: OrchFlowAPI = {
   tasks: {
     list: (filters?: TaskFilters) => ipcRenderer.invoke('tasks:list', filters) as Promise<Task[]>,
     create: (input: TaskCreateInput) => ipcRenderer.invoke('tasks:create', input) as Promise<Task>,
+    createBatch: (input: TaskBatchCreateInput) => ipcRenderer.invoke('tasks:createBatch', input) as Promise<Task[]>,
+    createFromPlan: (input: TaskPlanInput) => ipcRenderer.invoke('tasks:createFromPlan', input) as Promise<Task[]>,
+    importFromFile: (input: TaskImportInput) => ipcRenderer.invoke('tasks:importFromFile', input) as Promise<Task[]>,
     cancel: (taskId: string) => ipcRenderer.invoke('tasks:cancel', taskId) as Promise<void>,
     retry: (taskId: string) => ipcRenderer.invoke('tasks:retry', taskId) as Promise<void>,
-    get: (taskId: string) => ipcRenderer.invoke('tasks:get', taskId) as Promise<Task | null>
+    get: (taskId: string) => ipcRenderer.invoke('tasks:get', taskId) as Promise<Task | null>,
+    updateStatus: (taskId: string, status: TaskStatus) =>
+      ipcRenderer.invoke('tasks:updateStatus', taskId, status) as Promise<void>,
+    getDependencies: (taskId: string) =>
+      ipcRenderer.invoke('tasks:getDependencies', taskId) as Promise<TaskDependency[]>,
+    addDependency: (taskId: string, dependsOnTaskId: string, config?: MessageConfig) =>
+      ipcRenderer.invoke('tasks:addDependency', taskId, dependsOnTaskId, config) as Promise<void>,
+    removeDependency: (taskId: string, dependsOnTaskId: string) =>
+      ipcRenderer.invoke('tasks:removeDependency', taskId, dependsOnTaskId) as Promise<void>
   },
 
   approval: {
@@ -77,7 +99,9 @@ const api: OrchFlowAPI = {
     approve: (requestId: string) => ipcRenderer.invoke('approval:approve', requestId) as Promise<void>,
     reject: (requestId: string) => ipcRenderer.invoke('approval:reject', requestId) as Promise<void>,
     batchApprove: (requestIds: string[]) =>
-      ipcRenderer.invoke('approval:batchApprove', requestIds) as Promise<void>
+      ipcRenderer.invoke('approval:batchApprove', requestIds) as Promise<void>,
+    batchReject: (requestIds: string[]) =>
+      ipcRenderer.invoke('approval:batchReject', requestIds) as Promise<void>
   },
 
   checkpoints: {
@@ -99,7 +123,8 @@ const api: OrchFlowAPI = {
   audit: {
     query: (filters: AuditFilters) => ipcRenderer.invoke('audit:query', filters) as Promise<AuditEntry[]>,
     export: (filters: AuditFilters, format: 'json' | 'csv') =>
-      ipcRenderer.invoke('audit:export', filters, format) as Promise<string>
+      ipcRenderer.invoke('audit:export', filters, format) as Promise<string>,
+    getFilterOptions: () => ipcRenderer.invoke('audit:getFilterOptions') as Promise<AuditFilterOptions>
   },
 
   notifications: {
@@ -108,7 +133,27 @@ const api: OrchFlowAPI = {
   },
 
   dialog: {
-    openDirectory: () => ipcRenderer.invoke('dialog:openDirectory') as Promise<string | null>
+    openDirectory: () => ipcRenderer.invoke('dialog:openDirectory') as Promise<string | null>,
+    openFile: (filters?: FileFilter[]) => ipcRenderer.invoke('dialog:openFile', filters) as Promise<string | null>
+  },
+
+  pipeline: {
+    start: (projectId: string) => ipcRenderer.invoke('pipeline:start', projectId) as Promise<void>,
+    pause: (projectId: string) => ipcRenderer.invoke('pipeline:pause', projectId) as Promise<void>,
+    resume: (projectId: string) => ipcRenderer.invoke('pipeline:resume', projectId) as Promise<void>,
+    getGraph: (projectId: string) => ipcRenderer.invoke('pipeline:getGraph', projectId) as Promise<PipelineGraph>,
+    getStatus: (projectId: string) => ipcRenderer.invoke('pipeline:getStatus', projectId) as Promise<PipelineStatus>
+  },
+
+  messageBus: {
+    publish: (fromSessionId: string, toTaskId: string, message: Omit<AgentMessage, 'id' | 'timestamp' | 'delivered'>) =>
+      ipcRenderer.invoke('messageBus:publish', fromSessionId, toTaskId, message) as Promise<AgentMessage>,
+    list: (taskId?: string, delivered?: boolean) =>
+      ipcRenderer.invoke('messageBus:list', taskId, delivered) as Promise<AgentMessage[]>,
+    markDelivered: (messageId: string) =>
+      ipcRenderer.invoke('messageBus:markDelivered', messageId) as Promise<void>,
+    consumeForTask: (taskId: string) =>
+      ipcRenderer.invoke('messageBus:consumeForTask', taskId) as Promise<AgentMessage[]>
   },
 
   on: (channel: string, listener: (payload: unknown) => void) => {

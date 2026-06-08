@@ -3,6 +3,7 @@ import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { SessionsView } from './views/SessionsView'
 import { TasksView } from './views/TasksView'
+import { PipelineView } from './views/PipelineView'
 import { AuditView } from './views/AuditView'
 import { SettingsView } from './views/SettingsView'
 import { ApprovalCenter } from './components/ApprovalCenter'
@@ -13,6 +14,7 @@ import { useSessionsStore } from './stores/sessions.store'
 const VIEWS: Record<ViewKey, React.ComponentType> = {
   sessions: SessionsView,
   tasks: TasksView,
+  pipeline: PipelineView,
   audit: AuditView,
   settings: SettingsView
 }

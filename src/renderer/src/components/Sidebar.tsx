@@ -1,4 +1,4 @@
-import { Terminal, ListTodo, ScrollText, Settings as SettingsIcon, Plus } from 'lucide-react'
+import { Terminal, ListTodo, ScrollText, Settings as SettingsIcon, Plus, GitBranch } from 'lucide-react'
 import type { ViewKey } from '../stores/ui.store'
 
 interface SidebarProps {
@@ -15,6 +15,7 @@ interface NavItem {
 const ITEMS: NavItem[] = [
   { key: 'sessions', label: 'Sessions', icon: Terminal },
   { key: 'tasks', label: 'Tasks', icon: ListTodo },
+  { key: 'pipeline', label: 'Pipeline', icon: GitBranch },
   { key: 'audit', label: 'Audit', icon: ScrollText },
   { key: 'settings', label: 'Settings', icon: SettingsIcon }
 ]
