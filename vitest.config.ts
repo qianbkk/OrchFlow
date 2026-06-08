@@ -27,7 +27,7 @@ export default defineConfig({
     exclude: ['node_modules', 'out', 'release-app'],
     // Main-process tests need a different environment (node); override per-file
     // via `// @vitest-environment node` pragma at the top of the file.
-    setupFiles: [],
+    setupFiles: ['./src/test-setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

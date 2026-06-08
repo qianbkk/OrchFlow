@@ -25,7 +25,9 @@ export class StubDriver implements IAgentDriver {
   async send(): Promise<void> {}
 
   subscribe(sessionId: string, handler: (event: import('@shared/types').AgentEvent) => void): () => void {
+    let cancelled = false
     setImmediate(() => {
+      if (cancelled) return
       handler({
         type: 'error',
         timestamp: Date.now(),
@@ -42,6 +44,6 @@ export class StubDriver implements IAgentDriver {
         status: 'error'
       })
     })
-    return () => undefined
+    return () => { cancelled = true }
   }
 }

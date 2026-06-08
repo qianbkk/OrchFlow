@@ -15,8 +15,8 @@ function ApiKeyField({ agentType }: ApiKeyFieldProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async (): Promise<void> => {
-    const v = await window.orchflow.settings.get(`apiKey:${agentType}`)
-    setHasKey(typeof v === 'string' && v.length > 0)
+    const hasKey = await window.orchflow.settings.apiKeyExists(agentType)
+    setHasKey(hasKey)
   }
 
   useEffect(() => {

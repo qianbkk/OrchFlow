@@ -169,6 +169,11 @@ function ProjectPicker({ onClose, onPicked }: ProjectPickerProps): React.JSX.Ele
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const browse = async (): Promise<void> => {
+    const dir = await window.orchflow.dialog.openDirectory()
+    if (dir) setPath(dir)
+  }
+
   const submit = async (): Promise<void> => {
     if (!path.trim()) return
     setBusy(true)
@@ -193,18 +198,27 @@ function ProjectPicker({ onClose, onPicked }: ProjectPickerProps): React.JSX.Ele
       <div className="w-full max-w-md rounded-lg border border-[var(--color-border-1)] bg-[var(--color-bg-1)] p-6 shadow-2xl">
         <h3 className="mb-2 font-semibold">Open Project</h3>
         <p className="mb-3 text-sm text-[var(--color-text-1)]">
-          Enter the absolute path to a git repository on your machine.
+          Select a git repository on your machine.
         </p>
-        <input
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="C:\Users\you\projects\my-app"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void submit()
-          }}
-          className="mb-2 w-full rounded border border-[var(--color-border-1)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
-        />
+        <div className="mb-2 flex gap-2">
+          <input
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="C:\Users\you\projects\my-app"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submit()
+            }}
+            className="flex-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
+          />
+          <button
+            onClick={browse}
+            className="flex items-center gap-1 rounded border border-[var(--color-border-1)] bg-[var(--color-bg-2)] px-3 py-2 text-sm hover:bg-[var(--color-bg-3)]"
+            title="Browse for directory"
+          >
+            Browse…
+          </button>
+        </div>
         {error && (
           <p className="mb-2 text-sm text-[var(--color-danger)]">{error}</p>
         )}

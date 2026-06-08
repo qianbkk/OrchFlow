@@ -7,6 +7,8 @@ import { approvalGate } from './approval-gate'
 import { checkpointManager } from './checkpoint'
 import { notifier } from './notifier'
 import { broadcast } from './broadcast'
+import * as keytar from 'keytar'
+import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS } from '@shared/constants'
 
 const sessions = new SessionRepository()
 const audit = new AuditRepository()
@@ -40,8 +42,25 @@ function shouldAudit(event: AgentEvent): boolean {
 
 export const sessionManager = {
   async start(config: SessionConfig): Promise<Session> {
+    // SECURITY: Read API key from keytar (Windows Credential Manager) and
+    // inject it into the child process env. The driver only trusts the
+    // overrides passed via config.env — it never reads keytar directly.
+    const envOverrides = { ...(config.env ?? {}) }
+    if (!envOverrides['ANTHROPIC_API_KEY']) {
+      try {
+        const apiKey = await keytar.getPassword(
+          PROJECT_KEYTAR_SERVICE,
+          `${KEYTAR_KEYS.API_KEY_PREFIX}${config.agentType}`
+        )
+        if (apiKey) envOverrides['ANTHROPIC_API_KEY'] = apiKey
+      } catch {
+        // keytar may fail on CI or headless environments — non-fatal
+      }
+    }
+    const enrichedConfig = { ...config, env: envOverrides }
+
     const driver = getDriver(config.agentType)
-    const session = await driver.start(config)
+    const session = await driver.start(enrichedConfig)
     sessions.create(session)
 
     const unsubscribe = driver.subscribe(session.id, (event) => {
@@ -151,10 +170,8 @@ export const sessionManager = {
     const s = sessions.get(sessionId)
     if (!s) return
     const driver = getDriver(s.agentType)
-    // ClaudeCodeDriver has switchMode; stub drivers don't.
-    const claude = driver as unknown as { switchMode?: (id: string, m: Session['mode']) => void }
-    if (claude.switchMode) {
-      claude.switchMode(sessionId, mode)
+    if (driver.switchMode) {
+      driver.switchMode(sessionId, mode)
     }
   },
 
@@ -163,8 +180,7 @@ export const sessionManager = {
     const s = sessions.get(sessionId)
     if (!s) return
     const driver = getDriver(s.agentType)
-    const claude = driver as unknown as { ptyInput?: (id: string, d: string) => void }
-    if (claude.ptyInput) claude.ptyInput(sessionId, data)
+    if (driver.ptyInput) driver.ptyInput(sessionId, data)
   },
 
   /** Forward renderer resize to the underlying PTY so the CLI sees correct
@@ -173,10 +189,7 @@ export const sessionManager = {
     const s = sessions.get(sessionId)
     if (!s) return
     const driver = getDriver(s.agentType)
-    const claude = driver as unknown as {
-      ptyResize?: (id: string, c: number, r: number) => void
-    }
-    if (claude.ptyResize) claude.ptyResize(sessionId, cols, rows)
+    if (driver.ptyResize) driver.ptyResize(sessionId, cols, rows)
   },
 
   async openExternal(_sessionId: string): Promise<void> {

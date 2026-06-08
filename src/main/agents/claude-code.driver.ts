@@ -6,7 +6,6 @@ import type { AgentEvent, Session, SessionConfig, SessionMode, SessionStatus, To
 import type { IAgentDriver } from './driver.interface'
 import { getAgentBinaryPath } from './driver.registry'
 import { approvalGate } from '../core/approval-gate'
-import { settingsStore } from '../core/settings-store'
 import { checkpointManager } from '../core/checkpoint'
 import { TaskRepository } from '../db/repositories/task.repository'
 
@@ -28,9 +27,8 @@ function buildChildEnv(overrides: Record<string, string> = {}): Record<string, s
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined && ALLOWED_ENV_KEYS.has(k)) env[k] = v
   }
-  // Pull API key from keytar (don't leak process.env)
-  const apiKey = settingsStore.getAgentConfig('claude')?.['apiKey']
-  if (typeof apiKey === 'string' && apiKey) env['ANTHROPIC_API_KEY'] = apiKey
+  // API key is injected by session-manager via overrides (read from keytar).
+  // Never read settingsStore directly — keys are not in the JSON file.
   Object.assign(env, overrides)
   return env
 }
@@ -124,17 +122,28 @@ function parseStreamJsonLine(state: SessionState, line: string): boolean {
       // For high-risk operations, request approval BEFORE emitting the
       // event to the UI. The session moves to 'waiting_approval'.
       const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
-      const needsApproval = toolCall ? HIGH_RISK_TYPES.includes(toolCall.type) : false
+      // SECURITY: If we can't parse the tool type (null), default to requiring
+      // approval — unknown tools should never silently bypass the gate.
+      const needsApproval = toolCall == null
+        ? true
+        : HIGH_RISK_TYPES.includes(toolCall.type)
+      // Create a fallback ToolCall for the null case so the approval UI
+      // has something to display.
+      const effectiveToolCall: ToolCall = toolCall ?? {
+        type: 'other',
+        description: `Unknown tool: ${toolName}`,
+        detail: JSON.stringify(obj).slice(0, 200)
+      }
 
       emit(state, {
         type: 'tool_call',
         timestamp: Date.now(),
         content: `Tool call: ${toolName}`,
         taskId: state.session.taskId,
-        toolCall: toolCall ?? undefined
+        toolCall: effectiveToolCall
       })
 
-      if (needsApproval && toolCall && !state.cancelled) {
+      if (needsApproval && !state.cancelled) {
         // PRD §3.4.3: "每次 Approval Gate 确认前自动创建" — snapshot the
         // worktree before the high-risk operation runs so the user can
         // always roll back even after approving.
@@ -147,7 +156,7 @@ function parseStreamJsonLine(state: SessionState, line: string): boolean {
                 state.session.taskId,
                 task.worktreePath,
                 'pre_approval',
-                `Before ${toolCall.type}: ${toolCall.description.slice(0, 80)}`
+                `Before ${effectiveToolCall.type}: ${effectiveToolCall.description.slice(0, 80)}`
               )
             }
           } catch (err) {
@@ -157,7 +166,7 @@ function parseStreamJsonLine(state: SessionState, line: string): boolean {
         setStatus(state, 'waiting_approval')
         // Fire-and-forget: the result of approval drives the status, not the event emission
         state.pendingApproval = approvalGate
-          .request(state.session.id, state.session.taskId ?? '', toolCall)
+          .request(state.session.id, state.session.taskId ?? '', effectiveToolCall)
           .then((approved) => {
             state.pendingApproval = null
             if (state.cancelled) return approved

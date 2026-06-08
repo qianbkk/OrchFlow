@@ -6,6 +6,13 @@ import { userDataPath } from './paths'
 
 const SETTINGS_FILE = 'settings.json'
 
+/** Fields that MUST NEVER be written to disk — they belong in keytar. */
+const FORBIDDEN_SENSITIVE_KEYS = new Set([
+  'apiKey', 'api_key', 'apikey',
+  'token', 'secret', 'password', 'passwd',
+  'private_key', 'privateKey', 'credential'
+])
+
 interface Settings {
   agents: Record<string, Record<string, unknown>>
   global: Record<string, unknown>
@@ -49,6 +56,15 @@ export const settingsStore = {
     return load().agents[agentType] ?? null
   },
   setAgentConfig(agentType: string, config: Record<string, unknown>): Record<string, unknown> {
+    // SECURITY: refuse to persist sensitive fields (API keys, tokens, secrets)
+    // to the plaintext JSON file. These belong in keytar (Windows Credential Manager).
+    for (const k of Object.keys(config)) {
+      if (FORBIDDEN_SENSITIVE_KEYS.has(k.toLowerCase())) {
+        throw new Error(
+          `[settings-store] Refusing to persist sensitive field "${k}" to disk. Use keytar instead.`
+        )
+      }
+    }
     const s = load()
     s.agents[agentType] = { ...(s.agents[agentType] ?? {}), ...config }
     persist()

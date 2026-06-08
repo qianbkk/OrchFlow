@@ -6,6 +6,7 @@ import { TasksView } from './views/TasksView'
 import { AuditView } from './views/AuditView'
 import { SettingsView } from './views/SettingsView'
 import { ApprovalCenter } from './components/ApprovalCenter'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useUiStore, type ViewKey } from './stores/ui.store'
 import { useSessionsStore } from './stores/sessions.store'
 
@@ -68,16 +69,18 @@ function App(): React.JSX.Element {
   const Active = VIEWS[activeView] ?? SessionsView
 
   return (
-    <div className="flex h-full flex-col">
-      <TitleBar appName={appInfo?.name ?? 'OrchFlow'} appVersion={appInfo?.version} />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar active={activeView} onChange={(v) => setActiveView(v)} />
-        <main className="flex-1 overflow-hidden bg-[var(--color-bg-1)]">
-          <Active />
-        </main>
+    <ErrorBoundary>
+      <div className="flex h-full flex-col">
+        <TitleBar appName={appInfo?.name ?? 'OrchFlow'} appVersion={appInfo?.version} />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar active={activeView} onChange={(v) => setActiveView(v)} />
+          <main className="flex-1 overflow-hidden bg-[var(--color-bg-1)]">
+            <Active />
+          </main>
+        </div>
+        <ApprovalCenter />
       </div>
-      <ApprovalCenter />
-    </div>
+    </ErrorBoundary>
   )
 }
 

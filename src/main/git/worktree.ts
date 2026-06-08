@@ -65,11 +65,18 @@ export async function mergeWorktree(task: Task): Promise<void> {
   if (!task.worktreePath || !task.branchName) {
     throw new Error('Task has no worktree to merge')
   }
-  // Find the project root (parent of -orch-worktrees)
-  const wtBase = dirname(task.worktreePath)
-  const projectRoot = join(wtBase.replace(/-orch-worktrees$/, ''))
-  const git = simpleGit(projectRoot)
-  await git.raw(['merge', '--no-ff', task.branchName])
+  // Find the main worktree via `git worktree list` rather than relying on
+  // the `-orch-worktrees` directory suffix (which breaks if the user
+  // configures a custom worktree base path).
+  const git = simpleGit(task.worktreePath)
+  const raw = await git.raw(['worktree', 'list', '--porcelain'])
+  const mainPath = raw
+    .split('\n\n')
+    .find((block) => block.includes('HEAD') && !block.includes('worktree ') === false && !block.includes('prunable'))
+    ?.match(/^worktree (.+)$/m)?.[1]
+  if (!mainPath) throw new Error('Cannot determine main worktree path')
+  const mainGit = simpleGit(mainPath)
+  await mainGit.raw(['merge', '--no-ff', task.branchName])
 }
 
 export async function keepWorktree(_task: Task): Promise<void> {

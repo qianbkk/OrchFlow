@@ -13,7 +13,7 @@ import {
   Keyboard,
   List
 } from 'lucide-react'
-import type { DetectedAgent, Session, SessionMode, SessionStatus } from '@shared/types'
+import type { AgentEvent, DetectedAgent, Session, SessionMode, SessionStatus } from '@shared/types'
 import { TerminalPane } from '../components/TerminalPane'
 import { useSessionsStore } from '../stores/sessions.store'
 import { useRefreshOn } from '../hooks/useRefreshOn'
@@ -77,8 +77,20 @@ export function SessionsView(): React.JSX.Element {
     })()
   }, [loadAll, select])
 
-  // Subscribe to live events
-  useRefreshOn(['session:output', 'session:status'], () => {})
+  // Subscribe to live events — wire session:output and session:status to the
+  // Zustand store so the terminal pane receives real-time Agent output.
+  useEffect(() => {
+    const offOutput = window.orchflow.on('session:output', (payload: unknown) => {
+      useSessionsStore.getState().applyEvent(payload as AgentEvent)
+    })
+    const offStatus = window.orchflow.on('session:status', (payload: unknown) => {
+      useSessionsStore.getState().applyEvent(payload as AgentEvent)
+    })
+    return () => {
+      offOutput()
+      offStatus()
+    }
+  }, [])
 
   // PRD §3.5.2: Esc exits fullscreen (keyboard affordance for the fullscreen
   // overlay, since it feels modal to the user). Also auto-exits fullscreen
@@ -298,17 +310,19 @@ function SessionOutput({ sessionId, mode, fullscreen }: SessionOutputProps): Rea
   const renderedLenRef = useRef(0)
 
   // Replay buffered lines into xterm when log changes (headless mode only)
+  // Uses fullLines (up to 5000) so the terminal shows complete output history,
+  // not just the 20-line compact preview used in task list cards.
   useEffect(() => {
     if (mode !== 'headless') return
     const api = apiRef.current
     if (!api || !log) return
-    if (log.lines.length > renderedLenRef.current) {
-      for (let i = renderedLenRef.current; i < log.lines.length; i++) {
-        api.writeln(log.lines[i])
+    if (log.fullLines.length > renderedLenRef.current) {
+      for (let i = renderedLenRef.current; i < log.fullLines.length; i++) {
+        api.writeln(log.fullLines[i])
       }
-      renderedLenRef.current = log.lines.length
+      renderedLenRef.current = log.fullLines.length
     }
-  }, [log?.lines.length, log, mode])
+  }, [log?.fullLines.length, log, mode])
 
   // PRD §3.5.2: in interactive mode, subscribe to raw pty:data events
   // from the main process and write them straight into xterm.
@@ -331,8 +345,8 @@ function SessionOutput({ sessionId, mode, fullscreen }: SessionOutputProps): Rea
         apiRef.current = a
         renderedLenRef.current = 0
         if (mode === 'headless' && log) {
-          for (const line of log.lines) a.writeln(line)
-          renderedLenRef.current = log.lines.length
+          for (const line of log.fullLines) a.writeln(line)
+          renderedLenRef.current = log.fullLines.length
         }
       }}
       onData={(data) => {

@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { basename, resolve, isAbsolute, join } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -41,9 +41,6 @@ function validateUserPath(p: string, label: string): string {
   }
   const abs = isAbsolute(p) ? p : resolve(homedir(), p)
   if (!existsSync(abs)) throw new Error(`${label}: path does not exist: ${abs}`)
-  if (!existsSync(abs) || existsSync(resolve(abs))) {
-    // placeholder: keeps TS happy with strict noUncheckedIndexedAccess
-  }
   let real: string
   try {
     real = realpathSync(abs)
@@ -51,7 +48,8 @@ function validateUserPath(p: string, label: string): string {
     throw new Error(`${label}: cannot resolve real path: ${abs}`)
   }
   const home = homedir()
-  if (!real.startsWith(home + '\\') && !real.startsWith(home + '/') && real !== home) {
+  const normalizedHome = home.endsWith('/') || home.endsWith('\\') ? home : home + '/'
+  if (real !== home && !real.startsWith(normalizedHome)) {
     throw new Error(`${label}: path is outside the user's home directory`)
   }
   // Reject Windows device / UNC paths
@@ -125,13 +123,18 @@ ipcMain.handle('agents:setConfig', (_e, agentType: string, config: unknown) =>
   settingsStore.setAgentConfig(agentType, config as Record<string, unknown>)
 )
 
-// Settings (api keys via keytar)
+// Settings (api keys via keytar — NEVER return plaintext keys to Renderer)
 ipcMain.handle('settings:get', async (_e, key: string): Promise<unknown> => {
   if (key.startsWith('apiKey:')) {
-    const agentType = key.slice(7)
-    return keytar.getPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`)
+    // SECURITY: never return the API key plaintext to the Renderer.
+    // Use settings:apiKeyExists instead (returns boolean only).
+    throw new Error('Use settings:apiKeyExists to check key configuration — plaintext API keys are never sent to the Renderer')
   }
   return settingsStore.get(key)
+})
+ipcMain.handle('settings:apiKeyExists', async (_e, agentType: string): Promise<boolean> => {
+  const val = await keytar.getPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`)
+  return val != null && val.length > 0
 })
 ipcMain.handle('settings:set', async (_e, key: string, value: unknown): Promise<void> => {
   if (key.startsWith('apiKey:')) {
@@ -168,7 +171,7 @@ ipcMain.handle('pty:input', (_e, sessionId: string, data: string) => {
 ipcMain.handle('pty:resize', (_e, sessionId: string, cols: number, rows: number) => {
   sessionManager.ptyResize(sessionId, cols, rows)
 })
-ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
+ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
   const session = sessions.get(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const task = tasks.get(session.taskId)
@@ -177,16 +180,32 @@ ipcMain.handle('sessions:openExternal', (_e, sessionId: string) => {
   const cliPath = getAgentBinaryPath(session.agentType)
   // Use execFile with an arg array to prevent shell-injection from any
   // worktree path or agent type that contains shell metacharacters.
-  void execFile(
-    'wt',
-    [
-      '-w', '0',
-      'new-tab',
-      '--title', `OrchFlow ${session.agentType}`,
-      '-d', task.worktreePath,
-      cliPath
-    ]
-  )
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'wt',
+        [
+          '-w', '0',
+          'new-tab',
+          '--title', `OrchFlow ${session.agentType}`,
+          '-d', task.worktreePath!,
+          cliPath
+        ],
+        { timeout: 5000 },
+        (err) => { if (err) reject(err); else resolve() }
+      )
+    })
+  } catch {
+    // Fallback: if wt.exe is not available (older Win10, enterprise), use PowerShell
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'powershell',
+        ['-NoExit', '-Command', `Set-Location '${task.worktreePath}'; ${cliPath}`],
+        { timeout: 5000 },
+        (err) => { if (err) reject(err); else resolve() }
+      )
+    })
+  }
 })
 
 // Tasks
@@ -225,10 +244,14 @@ ipcMain.handle('git:getDiff', async (_e, worktreePath: string) => {
   return getWorktreeDiff(validated)
 })
 ipcMain.handle('git:merge', async (_e, taskId: string) => {
-  await mergeWorktree(requireTask(taskId))
+  const task = requireTask(taskId)
+  if (task.worktreePath) validateUserPath(task.worktreePath, 'git:merge')
+  await mergeWorktree(task)
 })
 ipcMain.handle('git:discard', async (_e, taskId: string) => {
-  await discardWorktree(requireTask(taskId))
+  const task = requireTask(taskId)
+  if (task.worktreePath) validateUserPath(task.worktreePath, 'git:discard')
+  await discardWorktree(task)
 })
 ipcMain.handle('git:keep', (_e, taskId: string) => {
   requireTask(taskId)
@@ -252,6 +275,17 @@ ipcMain.handle('audit:export', async (_e, filters: unknown, format: 'json' | 'cs
 // Notifications
 ipcMain.handle('notifications:list', () => notifications.list())
 ipcMain.handle('notifications:markRead', (_e, id: number) => notifications.markRead(id))
+
+// Dialog
+ipcMain.handle('dialog:openDirectory', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select project root directory (must be a git repository)',
+    properties: ['openDirectory'],
+    buttonLabel: 'Select'
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
 
 export function registerIpcHandlers(): void {
   // Handlers register on module import (above). This marker exists so the

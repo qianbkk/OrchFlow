@@ -281,6 +281,7 @@ export interface OrchFlowAPI {
   git: GitAPI
   audit: AuditAPI
   notifications: NotificationsAPI
+  dialog: DialogAPI
   on(channel: string, listener: (payload: unknown) => void): () => void
 }
 
@@ -300,6 +301,7 @@ export interface AgentsAPI {
 export interface SettingsAPI {
   get<T = unknown>(key: string): Promise<T | null>
   set(key: string, value: unknown): Promise<void>
+  apiKeyExists(agentType: string): Promise<boolean>
 }
 
 export interface SessionsAPI {
@@ -353,4 +355,8 @@ export interface AuditAPI {
 export interface NotificationsAPI {
   list(): Promise<Notification[]>
   markRead(id: number): Promise<void>
+}
+
+export interface DialogAPI {
+  openDirectory(): Promise<string | null>
 }

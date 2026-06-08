@@ -40,7 +40,9 @@ const api: OrchFlowAPI = {
 
   settings: {
     get: <T = unknown>(key: string) => ipcRenderer.invoke('settings:get', key) as Promise<T | null>,
-    set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value) as Promise<void>
+    set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value) as Promise<void>,
+    apiKeyExists: (agentType: string) =>
+      ipcRenderer.invoke('settings:apiKeyExists', agentType) as Promise<boolean>
   },
 
   sessions: {
@@ -103,6 +105,10 @@ const api: OrchFlowAPI = {
   notifications: {
     list: () => ipcRenderer.invoke('notifications:list') as Promise<Notification[]>,
     markRead: (id: number) => ipcRenderer.invoke('notifications:markRead', id) as Promise<void>
+  },
+
+  dialog: {
+    openDirectory: () => ipcRenderer.invoke('dialog:openDirectory') as Promise<string | null>
   },
 
   on: (channel: string, listener: (payload: unknown) => void) => {

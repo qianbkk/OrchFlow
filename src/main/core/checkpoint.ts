@@ -19,8 +19,16 @@ export const checkpointManager = {
         const status = await git.status()
         if (!status.isClean()) {
           // Stash uncommitted changes so we can restore them on rollback
-          const stashResult = await git.stash(['push', '-u', '-m', `orchflow-checkpoint-${Date.now()}`])
-          gitStash = stashResult
+          await git.raw(['stash', 'push', '-u', '-m', `orchflow-checkpoint-${Date.now()}`])
+          // Capture the actual stash ref (stash@{0}) rather than the
+          // "Saved working directory..." message. Without this, rollback()
+          // would pop whatever stash is on top of the stack — potentially
+          // the user's own manual stash, causing data corruption.
+          const stashList = await git.raw(['stash', 'list', '--format=%gd', '--max-count=1'])
+          const trimmed = stashList.trim()
+          if (trimmed && /^stash@\{[0-9]+\}$/.test(trimmed)) {
+            gitStash = trimmed
+          }
         }
         const log = await git.log({ maxCount: 1 })
         gitCommit = log.latest?.hash
@@ -65,7 +73,10 @@ export const checkpointManager = {
     }
     if (cp.gitStash) {
       try {
-        await git.stash(['pop'])
+        // Use the exact stash ref captured at create time (e.g. "stash@{0}")
+        // rather than a bare `git stash pop` which always pops the stack top
+        // — potentially the wrong stash.
+        await git.raw(['stash', 'pop', cp.gitStash])
       } catch (err) {
         console.warn('[checkpoint] stash pop failed:', err)
       }

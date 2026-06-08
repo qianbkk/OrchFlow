@@ -39,6 +39,14 @@ export function ApprovalCenter(): React.JSX.Element | null {
 
   return (
     <div className="pointer-events-none fixed right-4 top-16 z-30 flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2">
+      {/* SECURITY NOTICE: Current approval gate is audit-only, not blocking.
+          The Claude CLI process continues running while this dialog is shown.
+          Phase 1 will implement real PTY-level interception.
+          Users should use Checkpoint rollback to undo unintended operations. */}
+      <div className="pointer-events-auto rounded-lg border border-orange-500/40 bg-orange-900/30 px-3 py-2 text-xs text-orange-300">
+        ⚠️ Phase 0: This panel logs operations but does <strong>not</strong> block the Agent.
+        Use <span className="font-medium">Checkpoint rollback</span> to undo unwanted changes.
+      </div>
       {pending.map((req) => (
         <div
           key={req.id}
