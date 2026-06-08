@@ -14,7 +14,7 @@ files:
   - '!{LICENSE,LICENSE.md,LICENSE.txt,license,license.md,license.txt,NOTICE,NOTICE.md,NOTICE.txt}'
   - '!{CHANGELOG.md,CHANGELOG.CN.md,CONTRIBUTING.md,CONTRIBUTING.CN.md,docs/*}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tests,docs,build,dist,release-app,out,coverage}/**'
+  - '!{tests,docs,build,dist,release-app,out,coverage,e2e}/**'
   - '!{test,__tests__,tests,powered-test,example}/**'
 asarUnpack:
   - resources/**

@@ -24,7 +24,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
-    exclude: ['node_modules', 'out', 'release-app'],
+    exclude: ['node_modules', 'out', 'release-app', 'e2e'],
     // Main-process tests need a different environment (node); override per-file
     // via `// @vitest-environment node` pragma at the top of the file.
     setupFiles: ['./src/test-setup.ts'],
