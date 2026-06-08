@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -9,8 +9,6 @@ import { ClaudeCodeDriver } from './claude-code.driver'
 import { CodexDriver } from './codex.driver'
 import { CopilotDriver } from './copilot.driver'
 import type { IAgentDriver } from './driver.interface'
-
-const execFileP = promisify(execFile)
 
 // All three drivers are now real implementations (Phase 0: Claude, Phase 1: Codex, Phase 2: Copilot)
 const drivers: Map<AgentType, IAgentDriver> = new Map()
@@ -46,15 +44,14 @@ export function getAgentBinaryPath(type: AgentType): string {
 
 async function probeVersion(bin: string): Promise<string | undefined> {
   try {
-    // SECURITY: shell: false prevents command injection via user-configured
-    // executable paths. The bin path is already resolved to a real file by
-    // findOnPath/findNpmGlobalBinary (includes .cmd on Windows).
-    // Note: .cmd batch files on Windows require shell: true to spawn.
-    const { stdout } = await execFileP(bin, ['--version'], {
-      shell: process.platform === 'win32',
-      windowsHide: true,
-      timeout: 5000
-    })
+    // Use exec (not execFile) on Windows — .cmd batch files require a shell,
+    // and execFile + shell:true triggers DEP0190 deprecation warnings.
+    // exec always uses a shell, so no deprecation. Quote the path for safety.
+    const cmd = process.platform === 'win32'
+      ? `"${bin.replace(/"/g, '\\"')}" --version`
+      : `'${bin.replace(/'/g, "'\\''")}' --version`
+    const execP = promisify(exec)
+    const { stdout } = await execP(cmd, { windowsHide: true, timeout: 5000 })
     const m = stdout.match(/v?(\d+\.\d+\.\d+)/)
     return m ? m[1] : stdout.trim().split('\n')[0]
   } catch {

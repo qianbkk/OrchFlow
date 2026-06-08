@@ -58,12 +58,7 @@ function createWindow(): void {
     }
   })
 
-  // Dev mode: auto-open DevTools for debugging
-  if (is.dev) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
-  }
-
-  // Log renderer load errors
+  // Log renderer load errors (useful for debugging packaged builds)
   mainWindow.webContents.on('did-fail-load', (_e, code, desc) => {
     console.error(`[main] Renderer load failed: code=${code}, desc=${desc}`)
   })
@@ -79,14 +74,11 @@ function createWindow(): void {
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    console.log('[main] Loading renderer from:', process.env['ELECTRON_RENDERER_URL'])
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     const htmlPath = join(__dirnameSafe.replace(/\\/g, '/'), '../renderer/index.html')
-    console.log('[main] Loading renderer from file:', htmlPath)
     void mainWindow.loadFile(htmlPath)
   }
-  console.log('[main] Preload path:', preloadPath)
 }
 
 app.whenReady().then(() => {

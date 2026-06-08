@@ -3,11 +3,8 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 
-console.log('[main.tsx] React entry point executing')
 const rootEl = document.getElementById('root')
-console.log('[main.tsx] #root element:', rootEl ? 'found' : 'NOT FOUND')
-
-// Remove fallback loading indicator
+// Remove fallback loading indicator (shown before React mounts)
 const fallback = document.getElementById('orchflow-loading')
 if (fallback) fallback.remove()
 
@@ -17,7 +14,4 @@ if (rootEl) {
       <App />
     </React.StrictMode>
   )
-  console.log('[main.tsx] React rendered successfully')
-} else {
-  console.error('[main.tsx] FATAL: #root element not found!')
 }
