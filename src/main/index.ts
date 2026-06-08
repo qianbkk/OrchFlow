@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, session } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +14,29 @@ const __dirnameSafe = (() => {
     return __dirname
   }
 })()
+
+/** Production CSP — strict policy for packaged builds.
+ *  Dev mode needs permissive CSP (Vite HMR injects inline scripts). */
+const PROD_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'"
+].join('; ')
+
+function installCSP(): void {
+  if (is.dev) return
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [PROD_CSP]
+      }
+    })
+  })
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -52,6 +75,9 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.orchflow.app')
+
+  // Install CSP for production (dev mode uses permissive CSP for Vite HMR)
+  installCSP()
 
   // Initialize DB (runs migrations on first launch)
   getDb()
