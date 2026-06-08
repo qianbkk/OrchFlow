@@ -5,8 +5,18 @@
 
 import * as pty from '@lydell/node-pty'
 import { BrowserWindow } from 'electron'
-import type { AgentEvent, AgentType, Session, SessionConfig, SessionMode, SessionStatus } from '@shared/types'
+import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import type { AgentEvent, AgentType, Session, SessionConfig, SessionMode, SessionStatus, ToolCall } from '@shared/types'
 import { getAgentBinaryPath } from './driver.registry'
+import { approvalGate } from '../core/approval-gate'
+import { checkpointManager } from '../core/checkpoint'
+import { TaskRepository } from '../db/repositories/task.repository'
+
+// ===== Shared constants =====
+
+/** Tool call types that require user approval (PRD §3.4). */
+export const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
 
 // ===== Shared env builder =====
 
@@ -209,7 +219,41 @@ export function createSession(config: SessionConfig, agentType: AgentType): Sess
   }
 }
 
+/** Request approval for a high-risk tool call. Creates a pre-approval checkpoint,
+ *  sets status to waiting_approval, and returns a promise that resolves to true
+ *  if approved, false otherwise. (PRD §3.4.3) */
+export function requestApproval(
+  state: DriverSessionState,
+  toolCall: ToolCall,
+  label: string
+): Promise<boolean> {
+  // Create pre-approval checkpoint
+  if (state.session.taskId) {
+    try {
+      const task = new TaskRepository().get(state.session.taskId)
+      if (task?.worktreePath && existsSync(task.worktreePath)) {
+        void checkpointManager.create(state.session.id, state.session.taskId,
+          task.worktreePath, 'pre_approval',
+          `Before ${toolCall.type}: ${toolCall.description.slice(0, 80)}`)
+      }
+    } catch (err) { console.warn(`[${label}] pre-approval checkpoint failed:`, err) }
+  }
+
+  setStatus(state, 'waiting_approval', label)
+  return approvalGate
+    .request(state.session.id, state.session.taskId ?? '', toolCall)
+    .then((approved) => {
+      state.pendingApproval = null
+      if (state.cancelled) return approved
+      setStatus(state, approved ? 'running' : 'error', label)
+      return approved
+    })
+    .catch((err) => {
+      console.error(`[${label}] approval gate error:`, err)
+      state.pendingApproval = null
+      return false
+    })
+}
+
 // Re-export for convenience
-import { existsSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
 export { getAgentBinaryPath }

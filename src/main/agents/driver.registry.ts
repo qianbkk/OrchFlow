@@ -49,8 +49,9 @@ async function probeVersion(bin: string): Promise<string | undefined> {
     // SECURITY: shell: false prevents command injection via user-configured
     // executable paths. The bin path is already resolved to a real file by
     // findOnPath/findNpmGlobalBinary (includes .cmd on Windows).
+    // Note: .cmd batch files on Windows require shell: true to spawn.
     const { stdout } = await execFileP(bin, ['--version'], {
-      shell: false,
+      shell: process.platform === 'win32',
       windowsHide: true,
       timeout: 5000
     })

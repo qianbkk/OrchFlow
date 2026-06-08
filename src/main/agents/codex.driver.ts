@@ -1,14 +1,10 @@
-import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
 import type { AgentEvent, Session, SessionConfig, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
-import { approvalGate } from '../core/approval-gate'
-import { checkpointManager } from '../core/checkpoint'
-import { TaskRepository } from '../db/repositories/task.repository'
 import {
   buildChildEnv, sendPtyData, emit, setStatus,
   DriverSessionManager, ptySpawnOptions, resolveCwd, createSession,
-  getAgentBinaryPath
+  getAgentBinaryPath, HIGH_RISK_TYPES, requestApproval
 } from './driver-base'
 
 /** CodexDriver: Codex CLI integration.
@@ -16,7 +12,6 @@ import {
 
 const EXTRA_ENV_KEYS = ['OPENAI_API_KEY', 'OPENAI_ORG_ID']
 const LABEL = 'codex-driver'
-const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
 
 function classifyToolCall(name: string, description: string): ToolCall {
   const n = name.toLowerCase()
@@ -92,24 +87,7 @@ export class CodexDriver implements IAgentDriver {
           taskId: state.session.taskId, toolCall }, LABEL)
 
         if (needsApproval && !state.cancelled) {
-          if (state.session.taskId) {
-            try {
-              const task = new TaskRepository().get(state.session.taskId)
-              if (task?.worktreePath && existsSync(task.worktreePath)) {
-                void checkpointManager.create(state.session.id, state.session.taskId,
-                  task.worktreePath, 'pre_approval', `Before ${toolCall.type}: ${toolCall.description.slice(0, 80)}`)
-              }
-            } catch (err) { console.warn(`[${LABEL}] checkpoint failed:`, err) }
-          }
-          setStatus(state, 'waiting_approval', LABEL)
-          state.pendingApproval = approvalGate
-            .request(state.session.id, state.session.taskId ?? '', toolCall)
-            .then((approved) => {
-              state.pendingApproval = null
-              if (!state.cancelled) setStatus(state, approved ? 'running' : 'error', LABEL)
-              return approved
-            })
-            .catch(() => { state.pendingApproval = null; return false })
+          state.pendingApproval = requestApproval(state, toolCall, LABEL)
         }
         return
       }

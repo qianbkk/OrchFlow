@@ -1,5 +1,5 @@
 import { ipcMain, dialog } from 'electron'
-import { basename, resolve, isAbsolute, join } from 'node:path'
+import { basename, resolve, isAbsolute, join, sep } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -48,13 +48,13 @@ function validateUserPath(p: string, label: string): string {
     throw new Error(`${label}: cannot resolve real path: ${abs}`)
   }
   const home = homedir()
-  // SECURITY: Use path.normalize + path.sep for strict directory boundary check.
+  // SECURITY: Use path.resolve + path.sep for strict directory boundary check.
   // Prevents prefix attacks like /home/user-malicious matching /home/user.
   const normalizedReal = resolve(real)
   const normalizedHome = resolve(home)
-  const homeWithSep = normalizedHome.endsWith('/') || normalizedHome.endsWith('\\')
+  const homeWithSep = normalizedHome.endsWith(sep)
     ? normalizedHome
-    : normalizedHome + '/'
+    : normalizedHome + sep
   if (normalizedReal !== normalizedHome && !normalizedReal.startsWith(homeWithSep)) {
     throw new Error(`${label}: path is outside the user's home directory`)
   }

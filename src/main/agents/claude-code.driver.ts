@@ -1,14 +1,10 @@
-import { existsSync } from 'node:fs'
 import * as pty from '@lydell/node-pty'
 import type { AgentEvent, Session, SessionConfig, ToolCall } from '@shared/types'
 import type { IAgentDriver } from './driver.interface'
-import { approvalGate } from '../core/approval-gate'
-import { checkpointManager } from '../core/checkpoint'
-import { TaskRepository } from '../db/repositories/task.repository'
 import {
   buildChildEnv, sendPtyData, emit, setStatus,
   DriverSessionManager, ptySpawnOptions, resolveCwd, createSession,
-  getAgentBinaryPath
+  getAgentBinaryPath, HIGH_RISK_TYPES, requestApproval
 } from './driver-base'
 
 /** ClaudeCodeDriver: Claude Code CLI integration.
@@ -16,7 +12,6 @@ import {
  *  stream-json parsing, approval gate, and checkpoint integration. */
 
 const LABEL = 'claude-driver'
-const HIGH_RISK_TYPES: ToolCall['type'][] = ['file_delete', 'git_force_push', 'db_destructive', 'merge']
 
 /** Best-effort classification of a tool-use event into a ToolCall shape. */
 function toolCallFromEvent(obj: Record<string, unknown>): ToolCall | null {
@@ -114,31 +109,7 @@ export class ClaudeCodeDriver implements IAgentDriver {
           taskId: state.session.taskId, toolCall: effectiveToolCall }, LABEL)
 
         if (needsApproval && !state.cancelled) {
-          // PRD §3.4.3: auto-checkpoint before high-risk operations
-          if (state.session.taskId) {
-            try {
-              const task = new TaskRepository().get(state.session.taskId)
-              if (task?.worktreePath && existsSync(task.worktreePath)) {
-                void checkpointManager.create(state.session.id, state.session.taskId,
-                  task.worktreePath, 'pre_approval',
-                  `Before ${effectiveToolCall.type}: ${effectiveToolCall.description.slice(0, 80)}`)
-              }
-            } catch (err) { console.warn(`[${LABEL}] pre-approval checkpoint failed:`, err) }
-          }
-          setStatus(state, 'waiting_approval', LABEL)
-          state.pendingApproval = approvalGate
-            .request(state.session.id, state.session.taskId ?? '', effectiveToolCall)
-            .then((approved) => {
-              state.pendingApproval = null
-              if (state.cancelled) return approved
-              setStatus(state, approved ? 'running' : 'error', LABEL)
-              return approved
-            })
-            .catch((err) => {
-              console.error(`[${LABEL}] approval gate error:`, err)
-              state.pendingApproval = null
-              return false
-            })
+          state.pendingApproval = requestApproval(state, effectiveToolCall, LABEL)
         }
         return true
       }
