@@ -11,7 +11,13 @@ const depRepo = new TaskDependencyRepository()
 /** Per-project pipeline state */
 const pipelineStates = new Map<string, { status: PipelineStatus; running: boolean }>()
 
-/** Actually start a task: build prompt with upstream messages and launch session. */
+/** Maximum concurrent PTY sessions per project to prevent resource exhaustion. */
+const MAX_CONCURRENT_TASKS = 3
+const runningTaskCount = new Map<string, number>()
+
+/** Actually start a task: build prompt with upstream messages and launch session.
+ *  Respects MAX_CONCURRENT_TASKS — tasks exceeding the limit stay 'queued'
+ *  and are picked up when a running task completes. */
 async function startTask(task: Task): Promise<void> {
   if (!task.agentType) {
     console.warn(`[pipeline] task ${task.id} has no agent assigned, skipping`)
@@ -21,7 +27,16 @@ async function startTask(task: Task): Promise<void> {
     console.warn(`[pipeline] task ${task.id} has no worktree, skipping`)
     return
   }
+
+  // Concurrency guard: keep at most MAX_CONCURRENT_TASKS sessions per project
+  const running = runningTaskCount.get(task.projectId) ?? 0
+  if (running >= MAX_CONCURRENT_TASKS) {
+    taskRepo.updateStatus(task.id, 'queued')
+    return
+  }
+
   taskRepo.updateStatus(task.id, 'queued')
+  runningTaskCount.set(task.projectId, running + 1)
   const prefix = messageBus.buildPromptPrefix(task.id)
   const prompt = prefix + (task.description?.trim() || task.title)
   try {
@@ -35,7 +50,24 @@ async function startTask(task: Task): Promise<void> {
     broadcast('pipeline:status', { projectId: task.projectId, taskStarted: task.id })
   } catch (err) {
     console.error(`[pipeline] failed to start task ${task.id}:`, err)
+    const cur = runningTaskCount.get(task.projectId) ?? 1
+    runningTaskCount.set(task.projectId, Math.max(0, cur - 1))
     taskRepo.updateStatus(task.id, 'failed')
+  }
+}
+
+/** Called when a task finishes — decrements running count and starts queued tasks
+ *  that were waiting for a concurrency slot. */
+async function releaseSlotAndStartNext(projectId: string): Promise<void> {
+  const cur = runningTaskCount.get(projectId) ?? 1
+  runningTaskCount.set(projectId, Math.max(0, cur - 1))
+  const currentRunning = runningTaskCount.get(projectId) ?? 0
+  if (currentRunning >= MAX_CONCURRENT_TASKS) return
+  const queued = taskRepo.list({ projectId, status: 'queued' })
+  for (const qt of queued) {
+    const r = runningTaskCount.get(projectId) ?? 0
+    if (r >= MAX_CONCURRENT_TASKS) break
+    await startTask(qt)
   }
 }
 
@@ -83,10 +115,14 @@ export const pipelineEngine = {
   },
 
   /** Called when a task completes — checks downstream tasks and starts
-   *  any whose dependencies are all satisfied. */
+   *  any whose dependencies are all satisfied. Also releases a concurrency slot
+   *  and starts queued tasks that were waiting. */
   async onTaskCompleted(taskId: string, sessionId: string): Promise<void> {
     const task = taskRepo.get(taskId)
     if (!task) return
+
+    // Release concurrency slot and start queued tasks
+    await releaseSlotAndStartNext(task.projectId)
 
     // Publish messages to dependent tasks
     await messageBus.publishToDependents(taskId, sessionId)

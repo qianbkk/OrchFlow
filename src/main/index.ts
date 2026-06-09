@@ -1,10 +1,11 @@
 import { app, BrowserWindow, shell, session } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { join } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getDb, closeDb } from './db/database'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, registerApprovedPath } from './ipc'
 import { setupAppMenu } from './menu'
+import { ProjectRepository } from './db/repositories/project.repository'
 
 // Block CommonJS __dirname typing issue under ESM-less environment
 const __dirnameSafe = (() => {
@@ -89,6 +90,15 @@ app.whenReady().then(() => {
 
   // Initialize DB (runs migrations on first launch)
   getDb()
+
+  // Re-register all known project paths so validateUserPath works immediately
+  // after startup, even before the user opens a project via the dialog.
+  const projectRepo = new ProjectRepository()
+  for (const p of projectRepo.list()) {
+    registerApprovedPath(p.rootPath)
+    const name = basename(p.rootPath)
+    registerApprovedPath(join(dirname(p.rootPath), `${name}-orch-worktrees`))
+  }
 
   // Register all IPC handlers
   registerIpcHandlers()

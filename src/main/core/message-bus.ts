@@ -19,9 +19,9 @@ function sanitizeForPrompt(content: string): string {
     ? content.slice(0, MAX_MESSAGE_CONTENT_CHARS) + '\n[... truncated ...]'
     : content
 
-  // Strip common prompt injection patterns
+  // Strip common prompt injection patterns — matches after newlines too (not just line-start)
   return truncated
-    .replace(/^(system|assistant|human|user):\s*/gim, '[FILTERED]: ')
+    .replace(/(?:^|\n)(system|assistant|human|user):\s*/gi, '\n[FILTERED]: ')
     .replace(/<\|im_start\|>|<\|im_end\|>/g, '[FILTERED]')
 }
 

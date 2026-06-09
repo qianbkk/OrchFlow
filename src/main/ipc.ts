@@ -34,6 +34,9 @@ const requireTask = (id: string): Task => {
 
 // ===== Approved path registry (F-01 fix) =====
 
+/** Windows device/UNC path prefixes that are always rejected. */
+const DEVICE_PREFIXES = ['\\\\?\\', '\\\\.\\', '//./', '//localhost/']
+
 /** Paths approved via projects:open — renderer can only access these or their sub-paths.
  *  This is the "minimum privilege" model: the renderer can't access arbitrary filesystem paths. */
 const APPROVED_BASE_PATHS = new Set<string>()
@@ -42,10 +45,9 @@ export function registerApprovedPath(absPath: string): void {
   APPROVED_BASE_PATHS.add(resolve(absPath))
 }
 
-/** Validate that a renderer-supplied path is absolute, exists, and is under an
- *  approved project root or worktree base. Prevents renderer-driven FS access
- *  to arbitrary paths. */
-function validateUserPath(p: string, label: string): string {
+/** Common path validation: non-empty string, absolute, exists, resolvable, not a device path.
+ *  Does NOT check approved-paths — that's validateUserPath's job. */
+function validateAbsolutePath(p: string, label: string): string {
   if (typeof p !== 'string' || p.length === 0) {
     throw new Error(`${label}: path must be a non-empty string`)
   }
@@ -62,10 +64,18 @@ function validateUserPath(p: string, label: string): string {
   const normalizedReal = resolve(real)
 
   // Reject Windows device / UNC paths
-  const DEVICE_PREFIXES = ['\\\\?\\', '\\\\.\\', '//./', '//localhost/']
   if (DEVICE_PREFIXES.some(prefix => normalizedReal.startsWith(prefix))) {
     throw new Error(`${label}: device/UNC paths are not allowed`)
   }
+
+  return normalizedReal
+}
+
+/** Validate that a renderer-supplied path is absolute, exists, and is under an
+ *  approved project root or worktree base. Prevents renderer-driven FS access
+ *  to arbitrary paths. */
+function validateUserPath(p: string, label: string): string {
+  const normalizedReal = validateAbsolutePath(p, label)
 
   // Core security check: must be under an approved project root
   const isUnderApproved = [...APPROVED_BASE_PATHS].some(base =>
@@ -135,26 +145,7 @@ ipcMain.handle('projects:setCurrent', (_e, projectId: string): void => {
 })
 ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
   // projects:open is the entry point — validate the path is safe, then register it
-  if (typeof rootPath !== 'string' || !rootPath) {
-    throw new Error('projects:open: path must be a non-empty string')
-  }
-  if (!isAbsolute(rootPath)) {
-    throw new Error('projects:open: path must be absolute')
-  }
-  if (!existsSync(rootPath)) throw new Error(`projects:open: path does not exist: ${rootPath}`)
-  let realPath: string
-  try {
-    realPath = realpathSync(rootPath)
-  } catch {
-    throw new Error(`projects:open: cannot resolve real path: ${rootPath}`)
-  }
-  const validated = resolve(realPath)
-
-  // Reject device/UNC paths
-  const DEVICE_PREFIXES = ['\\\\?\\', '\\\\.\\', '//./', '//localhost/']
-  if (DEVICE_PREFIXES.some(prefix => validated.startsWith(prefix))) {
-    throw new Error('projects:open: device/UNC paths are not allowed')
-  }
+  const validated = validateAbsolutePath(rootPath, 'projects:open')
 
   if (!existsSync(join(validated, '.git'))) {
     throw new Error(`Not a git repository: ${validated}`)
