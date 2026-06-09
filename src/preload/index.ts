@@ -175,7 +175,15 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('orchflow', api)
   } catch (error) {
     console.error('[preload] contextBridge failed:', error)
+    throw new Error(`[preload] SECURITY: contextBridge failed to expose API. Aborting startup. Error: ${error}`)
   }
 } else {
-  ;(window as unknown as { orchflow: typeof api }).orchflow = api
+  // SECURITY: contextIsolation is required. Without it, the renderer process
+  // has direct access to Node.js APIs, completely bypassing the sandbox.
+  // Refuse to start in this insecure configuration.
+  throw new Error(
+    '[preload] SECURITY FATAL: contextIsolation is disabled. ' +
+    'OrchFlow requires contextIsolation: true in webPreferences. ' +
+    'Aborting startup to prevent insecure execution.'
+  )
 }
