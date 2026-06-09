@@ -1,5 +1,5 @@
 import { ipcMain, dialog } from 'electron'
-import { basename, resolve, isAbsolute, join, sep, dirname } from 'node:path'
+import { basename, resolve, isAbsolute, join, sep } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -17,7 +17,7 @@ import { sessionManager } from './core/session-manager'
 import { taskManager } from './core/task-manager'
 import { settingsStore } from './core/settings-store'
 import { currentProjectStore } from './core/project-store'
-import { getWorktreeDiff, mergeWorktree, discardWorktree } from './git/worktree'
+import { getWorktreeDiff, mergeWorktree, discardWorktree, toWorktreeBasePath } from './git/worktree'
 
 const projects = new ProjectRepository()
 const tasks = new TaskRepository()
@@ -78,9 +78,13 @@ function validateUserPath(p: string, label: string): string {
   const normalizedReal = validateAbsolutePath(p, label)
 
   // Core security check: must be under an approved project root
-  const isUnderApproved = [...APPROVED_BASE_PATHS].some(base =>
-    normalizedReal === base || normalizedReal.startsWith(base + sep)
-  )
+  let isUnderApproved = false
+  for (const base of APPROVED_BASE_PATHS) {
+    if (normalizedReal === base || normalizedReal.startsWith(base + sep)) {
+      isUnderApproved = true
+      break
+    }
+  }
   if (!isUnderApproved) {
     throw new Error(`${label}: path is not under any registered project root`)
   }
@@ -155,8 +159,7 @@ ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
 
   // Register this project root (and worktree base) as approved paths
   registerApprovedPath(validated)
-  // Worktree base is sibling to project: ../[project-name]-orch-worktrees
-  registerApprovedPath(join(dirname(validated), `${name}-orch-worktrees`))
+  registerApprovedPath(toWorktreeBasePath(validated))
 
   if (existing) {
     projects.touch(existing.id)

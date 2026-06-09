@@ -77,30 +77,29 @@ export const messageBus = {
         ? `### From: ${fromTask.agentType} session (${msg.fromSessionId?.slice(0, 8)})`
         : `### From: upstream task`
 
+      // Sanitize once, then format based on message type
+      const safe = sanitizeForPrompt(msg.content)
       let body = ''
       switch (msg.messageType) {
-        case 'text':
-          body = sanitizeForPrompt(msg.content)
-          break
         case 'diff':
-          body = `\`\`\`diff\n${sanitizeForPrompt(msg.content)}\n\`\`\``
+          body = `\`\`\`diff\n${safe}\n\`\`\``
+          break
+        case 'structured':
+          body = `\`\`\`json\n${safe}\n\`\`\``
+          break
+        case 'file_path':
+          body = `Output file: ${safe}`
           break
         case 'status':
           try {
             const status = JSON.parse(msg.content) as Record<string, unknown>
             body = `Status: ${status.success ? '✅ Success' : '❌ Failed'}\nFiles: ${(status.files as string[] | undefined)?.join(', ') ?? 'N/A'}`
           } catch {
-            body = sanitizeForPrompt(msg.content)
+            body = safe
           }
           break
-        case 'structured':
-          body = `\`\`\`json\n${sanitizeForPrompt(msg.content)}\n\`\`\``
-          break
-        case 'file_path':
-          body = `Output file: ${sanitizeForPrompt(msg.content)}`
-          break
-        case 'mixed':
-          body = sanitizeForPrompt(msg.content)
+        default: // text, mixed, unknown
+          body = safe
           break
       }
       sections.push(`${header}\n${body}\n`)

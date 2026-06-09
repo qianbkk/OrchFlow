@@ -1,11 +1,12 @@
 import { app, BrowserWindow, shell, session } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { join, dirname, basename } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getDb, closeDb } from './db/database'
 import { registerIpcHandlers, registerApprovedPath } from './ipc'
 import { setupAppMenu } from './menu'
 import { ProjectRepository } from './db/repositories/project.repository'
+import { toWorktreeBasePath } from './git/worktree'
 
 // Block CommonJS __dirname typing issue under ESM-less environment
 const __dirnameSafe = (() => {
@@ -96,8 +97,7 @@ app.whenReady().then(() => {
   const projectRepo = new ProjectRepository()
   for (const p of projectRepo.list()) {
     registerApprovedPath(p.rootPath)
-    const name = basename(p.rootPath)
-    registerApprovedPath(join(dirname(p.rootPath), `${name}-orch-worktrees`))
+    registerApprovedPath(toWorktreeBasePath(p.rootPath))
   }
 
   // Register all IPC handlers

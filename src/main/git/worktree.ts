@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import type { DiffResult, DiffFile, Task } from '@shared/types'
 
-function toWorktreeBasePath(projectRoot: string): string {
+/** Derive the worktree base directory for a project (sibling to project root). */
+export function toWorktreeBasePath(projectRoot: string): string {
   // Sibling to the project: ../[project-name]-orch-worktrees
   const parent = dirname(projectRoot)
   const projectName = basename(projectRoot)

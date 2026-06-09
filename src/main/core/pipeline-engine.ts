@@ -31,12 +31,11 @@ async function startTask(task: Task): Promise<void> {
   // Concurrency guard: keep at most MAX_CONCURRENT_TASKS sessions per project
   const running = runningTaskCount.get(task.projectId) ?? 0
   if (running >= MAX_CONCURRENT_TASKS) {
-    taskRepo.updateStatus(task.id, 'queued')
-    return
+    return // Stay in current status, will be picked up by releaseSlotAndStartNext
   }
 
-  taskRepo.updateStatus(task.id, 'queued')
   runningTaskCount.set(task.projectId, running + 1)
+  taskRepo.updateStatus(task.id, 'queued')
   const prefix = messageBus.buildPromptPrefix(task.id)
   const prompt = prefix + (task.description?.trim() || task.title)
   try {
@@ -57,17 +56,16 @@ async function startTask(task: Task): Promise<void> {
 }
 
 /** Called when a task finishes — decrements running count and starts queued tasks
- *  that were waiting for a concurrency slot. */
-async function releaseSlotAndStartNext(projectId: string): Promise<void> {
+ *  that were waiting for a concurrency slot. Uses fire-and-forget since queued
+ *  tasks are independent PTY spawns. */
+function releaseSlotAndStartNext(projectId: string): void {
   const cur = runningTaskCount.get(projectId) ?? 1
   runningTaskCount.set(projectId, Math.max(0, cur - 1))
-  const currentRunning = runningTaskCount.get(projectId) ?? 0
-  if (currentRunning >= MAX_CONCURRENT_TASKS) return
+
+  // Fire-and-forget queued tasks — startTask self-guards with concurrency check
   const queued = taskRepo.list({ projectId, status: 'queued' })
   for (const qt of queued) {
-    const r = runningTaskCount.get(projectId) ?? 0
-    if (r >= MAX_CONCURRENT_TASKS) break
-    await startTask(qt)
+    void startTask(qt)
   }
 }
 
@@ -121,8 +119,8 @@ export const pipelineEngine = {
     const task = taskRepo.get(taskId)
     if (!task) return
 
-    // Release concurrency slot and start queued tasks
-    await releaseSlotAndStartNext(task.projectId)
+    // Release concurrency slot and start queued tasks (fire-and-forget)
+    releaseSlotAndStartNext(task.projectId)
 
     // Publish messages to dependent tasks
     await messageBus.publishToDependents(taskId, sessionId)
