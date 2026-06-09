@@ -188,9 +188,12 @@ ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
 // Agents
 ipcMain.handle('agents:detectInstalled', async () => detectInstalledAgents())
 ipcMain.handle('agents:getConfig', (_e, agentType: string) => settingsStore.getAgentConfig(agentType))
-ipcMain.handle('agents:setConfig', (_e, agentType: string, config: unknown) =>
-  settingsStore.setAgentConfig(agentType, config as Record<string, unknown>)
-)
+ipcMain.handle('agents:setConfig', (_e, agentType: string, config: unknown) => {
+  if (config == null || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('agents:setConfig: config must be a plain object')
+  }
+  return settingsStore.setAgentConfig(agentType, config as Record<string, unknown>)
+})
 
 // Settings (api keys via keytar — NEVER return plaintext keys to Renderer)
 ipcMain.handle('settings:get', async (_e, key: string): Promise<unknown> => {
@@ -208,11 +211,13 @@ ipcMain.handle('settings:apiKeyExists', async (_e, agentType: string): Promise<b
 ipcMain.handle('settings:set', async (_e, key: string, value: unknown): Promise<void> => {
   if (key.startsWith('apiKey:')) {
     const agentType = key.slice(7)
-    const v = value as string
-    if (!v) {
+    if (typeof value !== 'string') {
+      throw new Error('settings:set: API key value must be a string')
+    }
+    if (!value) {
       await keytar.deletePassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`)
     } else {
-      await keytar.setPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`, v)
+      await keytar.setPassword(PROJECT_KEYTAR_SERVICE, `${KEYTAR_KEYS.API_KEY_PREFIX}${agentType}`, value)
     }
     return
   }
@@ -221,7 +226,29 @@ ipcMain.handle('settings:set', async (_e, key: string, value: unknown): Promise<
 
 // Sessions
 ipcMain.handle('sessions:list', (_e, taskId?: string) => sessions.list(taskId))
-ipcMain.handle('sessions:start', async (_e, config: SessionConfig) => sessionManager.start(config))
+ipcMain.handle('sessions:start', async (_e, config: unknown) => {
+  // Validate SessionConfig from renderer (SEC-005)
+  if (config == null || typeof config !== 'object') {
+    throw new Error('sessions:start: config must be an object')
+  }
+  const c = config as Record<string, unknown>
+  const VALID_AGENT_TYPES = ['claude', 'codex', 'copilot'] as const
+  if (typeof c.agentType !== 'string' || !VALID_AGENT_TYPES.includes(c.agentType as typeof VALID_AGENT_TYPES[number])) {
+    throw new Error(`sessions:start: agentType must be one of ${VALID_AGENT_TYPES.join(', ')}`)
+  }
+  if (typeof c.prompt !== 'string' || !c.prompt) {
+    throw new Error('sessions:start: prompt must be a non-empty string')
+  }
+  if (typeof c.worktreePath !== 'string' || !c.worktreePath) {
+    throw new Error('sessions:start: worktreePath must be a non-empty string')
+  }
+  // Truncate prompt to Windows CLI limit (8191 chars) with safety margin
+  const MAX_PROMPT_LENGTH = 7000
+  if (c.prompt.length > MAX_PROMPT_LENGTH) {
+    c.prompt = c.prompt.slice(0, MAX_PROMPT_LENGTH) + '\n[... prompt truncated for CLI compatibility ...]'
+  }
+  return sessionManager.start(c as unknown as SessionConfig)
+})
 ipcMain.handle('sessions:stop', async (_e, sessionId: string, mode: 'graceful' | 'force') => {
   await sessionManager.stop(sessionId, mode)
 })
@@ -303,11 +330,19 @@ ipcMain.handle('tasks:removeDependency', (_e, taskId: string, dependsOnTaskId: s
 ipcMain.handle('approval:queue', () => sessionManager.getApprovalQueue())
 ipcMain.handle('approval:approve', (_e, requestId: string) => sessionManager.approve(requestId))
 ipcMain.handle('approval:reject', (_e, requestId: string) => sessionManager.reject(requestId))
-ipcMain.handle('approval:batchApprove', (_e, requestIds: string[]) => {
-  for (const id of requestIds) sessionManager.approve(id)
+ipcMain.handle('approval:batchApprove', (_e, requestIds: unknown) => {
+  if (!Array.isArray(requestIds)) throw new Error('approval:batchApprove: requestIds must be an array')
+  if (requestIds.length > 100) throw new Error('approval:batchApprove: max 100 items per batch')
+  for (const id of requestIds) {
+    if (typeof id === 'string') sessionManager.approve(id)
+  }
 })
-ipcMain.handle('approval:batchReject', (_e, requestIds: string[]) => {
-  for (const id of requestIds) sessionManager.reject(id)
+ipcMain.handle('approval:batchReject', (_e, requestIds: unknown) => {
+  if (!Array.isArray(requestIds)) throw new Error('approval:batchReject: requestIds must be an array')
+  if (requestIds.length > 100) throw new Error('approval:batchReject: max 100 items per batch')
+  for (const id of requestIds) {
+    if (typeof id === 'string') sessionManager.reject(id)
+  }
 })
 
 // Checkpoints
@@ -415,9 +450,14 @@ ipcMain.handle('pipeline:getStatus', async (_e, projectId: string) => {
 })
 
 // Message Bus
-ipcMain.handle('messageBus:publish', async (_e, fromSessionId: string, toTaskId: string, message: unknown) => {
+ipcMain.handle('messageBus:publish', async (_e, fromSessionId: unknown, toTaskId: unknown, message: unknown) => {
+  if (typeof fromSessionId !== 'string') throw new Error('messageBus:publish: fromSessionId must be a string')
+  if (typeof toTaskId !== 'string') throw new Error('messageBus:publish: toTaskId must be a string')
+  if (message == null || typeof message !== 'object') throw new Error('messageBus:publish: message must be an object')
+  const m = message as Record<string, unknown>
+  if (typeof m.messageType !== 'string') throw new Error('messageBus:publish: message.messageType must be a string')
+  if (typeof m.content !== 'string') throw new Error('messageBus:publish: message.content must be a string')
   const { messageBus } = await import('./core/message-bus')
-  const m = message as { messageType: string; content: string }
   return messageBus.publish(fromSessionId, toTaskId, m.messageType as import('@shared/types').AgentMessageType, m.content)
 })
 ipcMain.handle('messageBus:list', async (_e, taskId?: string, delivered?: boolean) => {

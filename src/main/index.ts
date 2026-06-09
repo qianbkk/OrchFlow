@@ -70,8 +70,19 @@ function createWindow(): void {
   })
 
   // Open external URLs in user's default browser, never in-app
+  // SECURITY: only allow safe protocols (SEC-007)
+  const ALLOWED_PROTOCOLS = new Set(['https:', 'http:'])
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url)
+    try {
+      const url = new URL(details.url)
+      if (ALLOWED_PROTOCOLS.has(url.protocol)) {
+        void shell.openExternal(details.url)
+      } else {
+        console.warn(`[main] Blocked external URL with disallowed protocol: ${url.protocol}`)
+      }
+    } catch {
+      // Invalid URL — block it
+    }
     return { action: 'deny' }
   })
 
@@ -84,39 +95,52 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.orchflow.app')
+  try {
+    electronApp.setAppUserModelId('com.orchflow.app')
 
-  // Install CSP for production (dev mode uses permissive CSP for Vite HMR)
-  installCSP()
+    // Install CSP for production (dev mode uses permissive CSP for Vite HMR)
+    installCSP()
 
-  // Initialize DB (runs migrations on first launch)
-  getDb()
+    // Initialize DB (runs migrations on first launch)
+    getDb()
 
-  // Re-register all known project paths so validateUserPath works immediately
-  // after startup, even before the user opens a project via the dialog.
-  const projectRepo = new ProjectRepository()
-  for (const p of projectRepo.list()) {
-    registerApprovedPath(p.rootPath)
-    registerApprovedPath(toWorktreeBasePath(p.rootPath))
-  }
-
-  // Register all IPC handlers
-  registerIpcHandlers()
-
-  // Menu accelerators (hidden menubar, shortcuts still fire when focused)
-  setupAppMenu()
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
-
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+    // Re-register all known project paths so validateUserPath works immediately
+    // after startup, even before the user opens a project via the dialog.
+    const projectRepo = new ProjectRepository()
+    for (const p of projectRepo.list()) {
+      registerApprovedPath(p.rootPath)
+      registerApprovedPath(toWorktreeBasePath(p.rootPath))
     }
-  })
+
+    // Register all IPC handlers
+    registerIpcHandlers()
+
+    // Menu accelerators (hidden menubar, shortcuts still fire when focused)
+    setupAppMenu()
+
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  } catch (err) {
+    // ERR-init: Show error dialog instead of blank window on startup failure
+    const { dialog: errDialog } = require('electron') as typeof import('electron')
+    errDialog.showErrorBox(
+      'OrchFlow Startup Failed',
+      `The application failed to start:\n\n${err instanceof Error ? err.message : String(err)}\n\nPlease report this issue.`
+    )
+    app.quit()
+  }
+}).catch((err) => {
+  console.error('[main] app.whenReady() failed:', err)
+  app.quit()
 })
 
 app.on('window-all-closed', () => {

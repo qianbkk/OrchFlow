@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync, existsSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import type {
   Task, TaskCreateInput, TaskBatchCreateInput, TaskPlanInput, TaskImportInput,
   TaskStatus, MessageConfig, AgentType
@@ -202,7 +203,32 @@ Goal: ${input.goal}`
     const project = projectRepo.get(input.projectId)
     if (!project) throw new Error('Project not found')
 
-    const content = readFileSync(input.filePath, 'utf-8')
+    // SECURITY: validate file path is absolute, exists, and under the project root
+    if (typeof input.filePath !== 'string' || !input.filePath) {
+      throw new Error('importFromFile: filePath must be a non-empty string')
+    }
+    if (!isAbsolute(input.filePath)) {
+      throw new Error('importFromFile: filePath must be absolute')
+    }
+    if (!existsSync(input.filePath)) {
+      throw new Error(`importFromFile: file does not exist: ${input.filePath}`)
+    }
+    // Resolve symlinks and ensure file is under project root or home directory
+    let realPath: string
+    try {
+      realPath = realpathSync(input.filePath)
+    } catch {
+      throw new Error('importFromFile: cannot resolve file path')
+    }
+    const resolved = resolve(realPath)
+    const projectRoot = resolve(project.rootPath)
+    const { sep } = require('node:path') as typeof import('node:path')
+    const isUnderProject = resolved === projectRoot || resolved.startsWith(projectRoot + sep)
+    if (!isUnderProject) {
+      throw new Error('importFromFile: file must be under the project root directory')
+    }
+
+    const content = readFileSync(resolved, 'utf-8')
     let items: Array<{ title: string; description?: string }> = []
 
     switch (input.format) {
@@ -295,7 +321,10 @@ Goal: ${input.goal}`
       const sessionList = sessionRepo.list(id)
       const lastSession = sessionList.find((s) => s.status === 'done' || s.status === 'error')
       if (lastSession) {
-        void pipelineEngine.onTaskCompleted(id, lastSession.id)
+        // ERR-task-faf: catch errors from fire-and-forget pipeline notification
+        void pipelineEngine.onTaskCompleted(id, lastSession.id).catch((err) => {
+          console.error(`[task-manager] pipelineEngine.onTaskCompleted failed for ${id}:`, err)
+        })
       }
     }
   },

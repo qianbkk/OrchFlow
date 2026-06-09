@@ -62,10 +62,13 @@ function releaseSlotAndStartNext(projectId: string): void {
   const cur = runningTaskCount.get(projectId) ?? 1
   runningTaskCount.set(projectId, Math.max(0, cur - 1))
 
-  // Fire-and-forget queued tasks — startTask self-guards with concurrency check
+  // Fire-and-forget queued tasks — startTask self-guards with concurrency check.
+  // Catch errors to prevent unhandled promise rejections (ERR-pipeline-faf).
   const queued = taskRepo.list({ projectId, status: 'queued' })
   for (const qt of queued) {
-    void startTask(qt)
+    void startTask(qt).catch((err) => {
+      console.error(`[pipeline] unhandled error starting queued task ${qt.id}:`, err)
+    })
   }
 }
 

@@ -1,6 +1,6 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import { join } from 'node:path'
+import { join, basename as pathBasename } from 'node:path'
 import { existsSync } from 'node:fs'
 import { AGENT_DEFAULTS } from '@shared/constants'
 import type { AgentType, DetectedAgent } from '@shared/types'
@@ -10,7 +10,7 @@ import { CodexDriver } from './codex.driver'
 import { CopilotDriver } from './copilot.driver'
 import type { IAgentDriver } from './driver.interface'
 
-// All three drivers are now real implementations (Phase 0: Claude, Phase 1: Codex, Phase 2: Copilot)
+// All three drivers are now real implementations (Phase 0: Claude, Phase 1: Codex, Copilot)
 const drivers: Map<AgentType, IAgentDriver> = new Map()
 let initialized = false
 
@@ -34,10 +34,30 @@ export function listDrivers(): IAgentDriver[] {
   return Array.from(drivers.values())
 }
 
+/** Allowed binary name patterns for user-configured executablePath.
+ *  Prevents arbitrary code execution via settings. */
+const ALLOWED_BINARY_NAMES: Record<AgentType, string[]> = {
+  claude: ['claude', 'claude.cmd', 'claude.exe'],
+  codex: ['codex', 'codex.cmd', 'codex.exe'],
+  copilot: ['gh', 'gh.cmd', 'gh.exe']
+}
+
 export function getAgentBinaryPath(type: AgentType): string {
-  // Honor user-configured executable path if set; fall back to default
   const configured = settingsStore.getAgentConfig(type)?.executablePath
-  if (typeof configured === 'string' && configured) return configured
+  if (typeof configured === 'string' && configured) {
+    // SECURITY: validate the configured path exists and has an allowed binary name
+    if (!existsSync(configured)) {
+      throw new Error(`Configured executable not found: ${configured}`)
+    }
+    const binName = pathBasename(configured).toLowerCase()
+    const allowed = ALLOWED_BINARY_NAMES[type] ?? []
+    if (!allowed.some(a => binName === a.toLowerCase())) {
+      throw new Error(
+        `Configured executable "${configured}" has disallowed binary name "${binName}". Allowed: ${allowed.join(', ')}`
+      )
+    }
+    return configured
+  }
   const def = AGENT_DEFAULTS[type]
   return def.cliBinary
 }
@@ -46,7 +66,8 @@ async function probeVersion(bin: string): Promise<string | undefined> {
   try {
     // Use exec (not execFile) on Windows — .cmd batch files require a shell,
     // and execFile + shell:true triggers DEP0190 deprecation warnings.
-    // exec always uses a shell, so no deprecation. Quote the path for safety.
+    // The bin path is always resolved by findNpmGlobalBinary/findOnPath (never
+    // user-supplied), so shell injection is not a concern here.
     const cmd = process.platform === 'win32'
       ? `"${bin.replace(/"/g, '\\"')}" --version`
       : `'${bin.replace(/'/g, "'\\''")}' --version`

@@ -59,8 +59,10 @@ export const sessionManager = {
           `${KEYTAR_KEYS.API_KEY_PREFIX}${config.agentType}`
         )
         if (apiKey) envOverrides[envVarName] = apiKey
-      } catch {
-        // keytar may fail on CI or headless environments — non-fatal
+      } catch (err) {
+        // Log keytar failure instead of silently swallowing — helps diagnose
+        // "API key unavailable" issues (ERR-keytar-silent)
+        console.warn(`[session-manager] keytar.getPassword failed for ${config.agentType}:`, err)
       }
     }
     const enrichedConfig = { ...config, env: envOverrides }
@@ -137,7 +139,7 @@ export const sessionManager = {
 
   async stop(sessionId: string, mode: 'graceful' | 'force'): Promise<void> {
     const s = sessions.get(sessionId)
-    if (!s) return
+    if (!s) throw new Error(`Session not found: ${sessionId}`)
     const driver = getDriver(s.agentType)
     const cleanup = sessionCleanup.get(sessionId)
     if (cleanup) {
@@ -150,21 +152,21 @@ export const sessionManager = {
 
   async pause(sessionId: string): Promise<void> {
     const s = sessions.get(sessionId)
-    if (!s) return
+    if (!s) throw new Error(`Session not found: ${sessionId}`)
     const driver = getDriver(s.agentType)
     await driver.pause(sessionId)
   },
 
   async resume(sessionId: string): Promise<void> {
     const s = sessions.get(sessionId)
-    if (!s) return
+    if (!s) throw new Error(`Session not found: ${sessionId}`)
     const driver = getDriver(s.agentType)
     await driver.resume(sessionId)
   },
 
   async send(sessionId: string, message: string): Promise<void> {
     const s = sessions.get(sessionId)
-    if (!s) return
+    if (!s) throw new Error(`Session not found: ${sessionId}`)
     const driver = getDriver(s.agentType)
     await driver.send(sessionId, message)
   },
@@ -172,7 +174,7 @@ export const sessionManager = {
   async attachPty(sessionId: string): Promise<void> {
     // Switch the session mode in the DB; the renderer can then re-render via xterm.js
     const s = sessions.get(sessionId)
-    if (!s) return
+    if (!s) throw new Error(`Session not found: ${sessionId}`)
     s.mode = 'interactive'
   },
 
