@@ -11,6 +11,20 @@ const depRepo = new TaskDependencyRepository()
 const taskRepo = new TaskRepository()
 const sessionRepo = new SessionRepository()
 
+/** Sanitize content for prompt injection prevention (C-03 fix).
+ *  Truncates long content and strips common prompt injection patterns. */
+function sanitizeForPrompt(content: string): string {
+  const MAX_MESSAGE_CONTENT_CHARS = 4000
+  const truncated = content.length > MAX_MESSAGE_CONTENT_CHARS
+    ? content.slice(0, MAX_MESSAGE_CONTENT_CHARS) + '\n[... truncated ...]'
+    : content
+
+  // Strip common prompt injection patterns
+  return truncated
+    .replace(/^(system|assistant|human|user):\s*/gim, '[FILTERED]: ')
+    .replace(/<\|im_start\|>|<\|im_end\|>/g, '[FILTERED]')
+}
+
 /** PRD §11.4: Simple file + event message passing between agents.
  *  Sender Agent completes task → MessageBus generates message → stores in DB
  *  Receiver Session startup → MessageBus injects upstream messages as prompt prefix */
@@ -66,27 +80,27 @@ export const messageBus = {
       let body = ''
       switch (msg.messageType) {
         case 'text':
-          body = msg.content
+          body = sanitizeForPrompt(msg.content)
           break
         case 'diff':
-          body = `\`\`\`diff\n${msg.content}\n\`\`\``
+          body = `\`\`\`diff\n${sanitizeForPrompt(msg.content)}\n\`\`\``
           break
         case 'status':
           try {
             const status = JSON.parse(msg.content) as Record<string, unknown>
             body = `Status: ${status.success ? '✅ Success' : '❌ Failed'}\nFiles: ${(status.files as string[] | undefined)?.join(', ') ?? 'N/A'}`
           } catch {
-            body = msg.content
+            body = sanitizeForPrompt(msg.content)
           }
           break
         case 'structured':
-          body = `\`\`\`json\n${msg.content}\n\`\`\``
+          body = `\`\`\`json\n${sanitizeForPrompt(msg.content)}\n\`\`\``
           break
         case 'file_path':
-          body = `Output file: ${msg.content}`
+          body = `Output file: ${sanitizeForPrompt(msg.content)}`
           break
         case 'mixed':
-          body = msg.content
+          body = sanitizeForPrompt(msg.content)
           break
       }
       sections.push(`${header}\n${body}\n`)

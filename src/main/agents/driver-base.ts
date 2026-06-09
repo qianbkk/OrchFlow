@@ -50,15 +50,15 @@ export function buildChildEnv(
 
 // ===== PTY data sender =====
 
-/** Send raw PTY data to the first open BrowserWindow. Avoids broadcasting
- *  keystrokes (interactive mode) to every window. */
+/** Send raw PTY data to all BrowserWindows. Broadcasts to all windows
+ *  rather than hardcoding wins[0] to support multi-window scenarios. */
 export function sendPtyData(sessionId: string, data: string, label: string): void {
-  const wins = BrowserWindow.getAllWindows()
-  if (wins.length === 0) return
-  try {
-    wins[0].webContents.send('pty:data', { sessionId, data })
-  } catch (err) {
-    console.warn(`[${label}] pty:data send failed:`, err)
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      win.webContents.send('pty:data', { sessionId, data })
+    } catch (err) {
+      console.warn(`[${label}] pty:data send to window failed:`, err)
+    }
   }
 }
 

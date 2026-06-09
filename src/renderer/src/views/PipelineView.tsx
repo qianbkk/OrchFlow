@@ -49,7 +49,7 @@ export function PipelineView(): React.JSX.Element {
     const off2 = window.orchflow.on('pipeline:completed', () => { void reload() })
     const off3 = window.orchflow.on('pipeline:failed', () => { void reload() })
     return () => { off(); off2(); off3() }
-  }, [])
+  }, [projectId])
 
   // Pan handlers
   const handleMouseDown = (e: React.MouseEvent): void => {

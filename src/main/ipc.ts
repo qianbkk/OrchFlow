@@ -1,7 +1,6 @@
 import { ipcMain, dialog } from 'electron'
-import { basename, resolve, isAbsolute, join, sep } from 'node:path'
+import { basename, resolve, isAbsolute, join, sep, dirname } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import * as keytar from 'keytar'
@@ -33,35 +32,49 @@ const requireTask = (id: string): Task => {
   return t
 }
 
-/** Validate that a renderer-supplied path is an absolute, existing directory
- *  that lives under the user's home (defense against renderer-driven FS access). */
+// ===== Approved path registry (F-01 fix) =====
+
+/** Paths approved via projects:open — renderer can only access these or their sub-paths.
+ *  This is the "minimum privilege" model: the renderer can't access arbitrary filesystem paths. */
+const APPROVED_BASE_PATHS = new Set<string>()
+
+export function registerApprovedPath(absPath: string): void {
+  APPROVED_BASE_PATHS.add(resolve(absPath))
+}
+
+/** Validate that a renderer-supplied path is absolute, exists, and is under an
+ *  approved project root or worktree base. Prevents renderer-driven FS access
+ *  to arbitrary paths. */
 function validateUserPath(p: string, label: string): string {
   if (typeof p !== 'string' || p.length === 0) {
     throw new Error(`${label}: path must be a non-empty string`)
   }
-  const abs = isAbsolute(p) ? p : resolve(homedir(), p)
-  if (!existsSync(abs)) throw new Error(`${label}: path does not exist: ${abs}`)
+  if (!isAbsolute(p)) {
+    throw new Error(`${label}: path must be absolute`)
+  }
+  if (!existsSync(p)) throw new Error(`${label}: path does not exist: ${p}`)
   let real: string
   try {
-    real = realpathSync(abs)
+    real = realpathSync(p)
   } catch {
-    throw new Error(`${label}: cannot resolve real path: ${abs}`)
+    throw new Error(`${label}: cannot resolve real path: ${p}`)
   }
-  const home = homedir()
-  // SECURITY: Use path.resolve + path.sep for strict directory boundary check.
-  // Prevents prefix attacks like /home/user-malicious matching /home/user.
   const normalizedReal = resolve(real)
-  const normalizedHome = resolve(home)
-  const homeWithSep = normalizedHome.endsWith(sep)
-    ? normalizedHome
-    : normalizedHome + sep
-  if (normalizedReal !== normalizedHome && !normalizedReal.startsWith(homeWithSep)) {
-    throw new Error(`${label}: path is outside the user's home directory`)
-  }
+
   // Reject Windows device / UNC paths
-  if (normalizedReal.startsWith('\\\\?\\') || normalizedReal.startsWith('//./') || normalizedReal.startsWith('//localhost/')) {
+  const DEVICE_PREFIXES = ['\\\\?\\', '\\\\.\\', '//./', '//localhost/']
+  if (DEVICE_PREFIXES.some(prefix => normalizedReal.startsWith(prefix))) {
     throw new Error(`${label}: device/UNC paths are not allowed`)
   }
+
+  // Core security check: must be under an approved project root
+  const isUnderApproved = [...APPROVED_BASE_PATHS].some(base =>
+    normalizedReal === base || normalizedReal.startsWith(base + sep)
+  )
+  if (!isUnderApproved) {
+    throw new Error(`${label}: path is not under any registered project root`)
+  }
+
   return normalizedReal
 }
 
@@ -121,12 +134,39 @@ ipcMain.handle('projects:setCurrent', (_e, projectId: string): void => {
   currentProjectStore.set(projectId)
 })
 ipcMain.handle('projects:open', (_e, rootPath: string): Project => {
-  const validated = validateUserPath(rootPath, 'projects:open')
+  // projects:open is the entry point — validate the path is safe, then register it
+  if (typeof rootPath !== 'string' || !rootPath) {
+    throw new Error('projects:open: path must be a non-empty string')
+  }
+  if (!isAbsolute(rootPath)) {
+    throw new Error('projects:open: path must be absolute')
+  }
+  if (!existsSync(rootPath)) throw new Error(`projects:open: path does not exist: ${rootPath}`)
+  let realPath: string
+  try {
+    realPath = realpathSync(rootPath)
+  } catch {
+    throw new Error(`projects:open: cannot resolve real path: ${rootPath}`)
+  }
+  const validated = resolve(realPath)
+
+  // Reject device/UNC paths
+  const DEVICE_PREFIXES = ['\\\\?\\', '\\\\.\\', '//./', '//localhost/']
+  if (DEVICE_PREFIXES.some(prefix => validated.startsWith(prefix))) {
+    throw new Error('projects:open: device/UNC paths are not allowed')
+  }
+
   if (!existsSync(join(validated, '.git'))) {
     throw new Error(`Not a git repository: ${validated}`)
   }
   const name = basename(validated)
   const existing = projects.findByPath(validated)
+
+  // Register this project root (and worktree base) as approved paths
+  registerApprovedPath(validated)
+  // Worktree base is sibling to project: ../[project-name]-orch-worktrees
+  registerApprovedPath(join(dirname(validated), `${name}-orch-worktrees`))
+
   if (existing) {
     projects.touch(existing.id)
     currentProjectStore.set(existing.id)
@@ -232,13 +272,15 @@ ipcMain.handle('sessions:openExternal', async (_e, sessionId: string) => {
     })
   } catch {
     // Fallback: if wt.exe is not available (older Win10, enterprise), use PowerShell
-    // SECURITY: Escape single quotes in paths to prevent command injection
-    const escapedPath = task.worktreePath!.replace(/'/g, "''")
-    const escapedCli = cliPath.replace(/'/g, "''")
+    // SECURITY: Use -EncodedCommand to completely avoid shell injection.
+    // PowerShell -Command parses special chars (`, $, &, ;, etc.), so we encode
+    // the entire script as UTF-16LE Base64, which -EncodedCommand treats as opaque.
+    const psScript = `Set-Location -LiteralPath '${task.worktreePath!.replace(/'/g, "''")}'; & '${cliPath.replace(/'/g, "''")}'`
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
     await new Promise<void>((resolve, reject) => {
       execFile(
         'powershell',
-        ['-NoExit', '-Command', `Set-Location '${escapedPath}'; &'${escapedCli}'`],
+        ['-NoExit', '-NonInteractive', '-EncodedCommand', encoded],
         { timeout: 5000 },
         (err) => { if (err) reject(err); else resolve() }
       )

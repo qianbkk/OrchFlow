@@ -35,7 +35,9 @@ export const taskManager = {
         task.worktreePath = worktreePath
         task.branchName = branchName
       } catch (err) {
-        console.warn(`[task-manager] worktree setup failed:`, err)
+        // Rollback: delete the orphaned task record from DB on worktree failure
+        try { taskRepo.delete(task.id) } catch { /* best effort */ }
+        throw new Error(`Task creation failed: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 

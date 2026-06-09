@@ -133,65 +133,39 @@ export function SettingsView(): React.JSX.Element {
     void window.orchflow.agents.detectInstalled().then(setAgents)
   }, [])
 
-  // Phase 0: only Claude is wired. Codex/Copilot cards are hidden in the UI
-  // even though their detection runs (so the user knows they're not yet
-  // supported). PRD §9: Codex/Copilot CLI integration is Phase 1/2.
   return (
     <div className="h-full overflow-auto p-6">
       <h2 className="mb-4 text-lg font-semibold">Settings</h2>
 
       <section className="mb-6">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-2)]">
-          Claude Code (Phase 0 — wired)
+          Agent CLIs
         </h3>
-        {(() => {
-          const det = agents.find((a) => a.type === 'claude')
-          return (
-            <div className="rounded-lg border border-[var(--color-border-1)] bg-[var(--color-bg-2)] p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <div>
-                  <div className="font-medium">{AGENT_DEFAULTS.claude.displayName}</div>
-                  <div className="text-xs text-[var(--color-text-2)]">
-                    Package: <code>{AGENT_DEFAULTS.claude.package}</code>
-                  </div>
-                  {det?.path && (
-                    <div className="text-xs text-[var(--color-text-2)]">
-                      Detected: <code>{det.path}</code> {det.version && `(v${det.version})`}
-                    </div>
-                  )}
-                </div>
-                <StatusPill tone={det?.installed ? 'accent2' : 'danger'}>
-                  {det?.installed ? 'installed' : 'missing'}
-                </StatusPill>
-              </div>
-              <ApiKeyField agentType="claude" />
-            </div>
-          )
-        })()}
-      </section>
-
-      <section className="mb-6">
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-2)]">
-          Detected on this machine (not yet wired in MVP)
-        </h3>
-        <div className="space-y-2">
-          {(['codex', 'copilot'] as const).map((type) => {
+        <div className="space-y-3">
+          {(['claude', 'codex', 'copilot'] as const).map((type) => {
             const det = agents.find((a) => a.type === type)
-            if (!det) return null
             return (
               <div
                 key={type}
-                className="flex items-center justify-between rounded-lg border border-[var(--color-border-1)]/60 bg-[var(--color-bg-2)]/50 px-3 py-2 text-sm"
+                className="rounded-lg border border-[var(--color-border-1)] bg-[var(--color-bg-2)] p-4"
               >
-                <div>
-                  <span className="font-medium">{AGENT_DEFAULTS[type].displayName}</span>
-                  {det.path && (
-                    <span className="ml-2 text-xs text-[var(--color-text-2)]">
-                      <code>{det.path}</code> {det.version && `v${det.version}`}
-                    </span>
-                  )}
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{AGENT_DEFAULTS[type].displayName}</div>
+                    <div className="text-xs text-[var(--color-text-2)]">
+                      Package: <code>{AGENT_DEFAULTS[type].package}</code>
+                    </div>
+                    {det?.path && (
+                      <div className="text-xs text-[var(--color-text-2)]">
+                        Detected: <code>{det.path}</code> {det.version && `(v${det.version})`}
+                      </div>
+                    )}
+                  </div>
+                  <StatusPill tone={det?.installed ? 'accent2' : 'danger'}>
+                    {det?.installed ? 'installed' : 'missing'}
+                  </StatusPill>
                 </div>
-                <StatusPill tone="muted">Phase 1/2</StatusPill>
+                <ApiKeyField agentType={type} />
               </div>
             )
           })}

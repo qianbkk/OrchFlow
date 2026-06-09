@@ -46,13 +46,19 @@ export const sessionManager = {
     // inject it into the child process env. The driver only trusts the
     // overrides passed via config.env — it never reads keytar directly.
     const envOverrides = { ...(config.env ?? {}) }
-    if (!envOverrides['ANTHROPIC_API_KEY']) {
+    const API_KEY_ENV: Record<string, string> = {
+      claude: 'ANTHROPIC_API_KEY',
+      codex: 'OPENAI_API_KEY',
+      copilot: 'GH_TOKEN'
+    }
+    const envVarName = API_KEY_ENV[config.agentType]
+    if (envVarName && !envOverrides[envVarName]) {
       try {
         const apiKey = await keytar.getPassword(
           PROJECT_KEYTAR_SERVICE,
           `${KEYTAR_KEYS.API_KEY_PREFIX}${config.agentType}`
         )
-        if (apiKey) envOverrides['ANTHROPIC_API_KEY'] = apiKey
+        if (apiKey) envOverrides[envVarName] = apiKey
       } catch {
         // keytar may fail on CI or headless environments — non-fatal
       }
@@ -75,6 +81,12 @@ export const sessionManager = {
             taskId: session.taskId,
             sessionId: session.id
           })
+          // Clean up driver subscription to prevent memory leak on natural session end
+          const cleanup = sessionCleanup.get(session.id)
+          if (cleanup) {
+            cleanup()
+            sessionCleanup.delete(session.id)
+          }
         }
       }
       // Only log security-relevant events to the audit log; the per-event

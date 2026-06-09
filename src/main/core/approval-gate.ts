@@ -74,6 +74,7 @@ export const approvalGate = {
       broadcast('approval:resolved', request)
       resolveFn(false)
     }, 5 * 60 * 1000)
+    timer.unref() // Don't block Node.js process exit while waiting for approval
     pending.set(request.id, { resolve: resolveFn, timer })
 
     broadcast('approval:request', request)

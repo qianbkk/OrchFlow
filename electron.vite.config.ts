@@ -15,8 +15,7 @@ const RUNTIME_REQUIRED = [
   '@lydell/node-pty-linux-arm64',
   '@lydell/node-pty-darwin-x64',
   '@lydell/node-pty-darwin-arm64',
-  'keytar',
-  'better-sqlite3'
+  'keytar'
 ]
 
 export default defineConfig({

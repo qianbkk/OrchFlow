@@ -1,7 +1,8 @@
-import type { PipelineGraph, PipelineNode, PipelineEdge, PipelineStatus } from '@shared/types'
+import type { PipelineGraph, PipelineNode, PipelineEdge, PipelineStatus, Task } from '@shared/types'
 import { TaskRepository } from '../db/repositories/task.repository'
 import { TaskDependencyRepository } from '../db/repositories/dependency.repository'
 import { messageBus } from './message-bus'
+import { sessionManager } from './session-manager'
 import { broadcast } from './broadcast'
 
 const taskRepo = new TaskRepository()
@@ -9,6 +10,34 @@ const depRepo = new TaskDependencyRepository()
 
 /** Per-project pipeline state */
 const pipelineStates = new Map<string, { status: PipelineStatus; running: boolean }>()
+
+/** Actually start a task: build prompt with upstream messages and launch session. */
+async function startTask(task: Task): Promise<void> {
+  if (!task.agentType) {
+    console.warn(`[pipeline] task ${task.id} has no agent assigned, skipping`)
+    return
+  }
+  if (!task.worktreePath) {
+    console.warn(`[pipeline] task ${task.id} has no worktree, skipping`)
+    return
+  }
+  taskRepo.updateStatus(task.id, 'queued')
+  const prefix = messageBus.buildPromptPrefix(task.id)
+  const prompt = prefix + (task.description?.trim() || task.title)
+  try {
+    await sessionManager.start({
+      taskId: task.id,
+      agentType: task.agentType,
+      worktreePath: task.worktreePath,
+      prompt
+    })
+    taskRepo.updateStatus(task.id, 'running')
+    broadcast('pipeline:status', { projectId: task.projectId, taskStarted: task.id })
+  } catch (err) {
+    console.error(`[pipeline] failed to start task ${task.id}:`, err)
+    taskRepo.updateStatus(task.id, 'failed')
+  }
+}
 
 /** PRD §3.3.1 Mode 3: Sequential Pipeline — tasks execute in dependency order.
  *  When a task completes, its results are passed to downstream tasks via MessageBus,
@@ -46,7 +75,7 @@ export const pipelineEngine = {
     // Start root tasks
     for (const task of rootTasks) {
       if (task.status === 'created' || task.status === 'queued') {
-        taskRepo.updateStatus(task.id, 'queued')
+        await startTask(task)
       }
     }
 
@@ -77,8 +106,7 @@ export const pipelineEngine = {
       })
 
       if (allSatisfied && (downstreamTask.status === 'created' || downstreamTask.status === 'queued')) {
-        taskRepo.updateStatus(dep.taskId, 'queued')
-        broadcast('pipeline:status', { projectId: task.projectId, taskReady: dep.taskId })
+        await startTask(downstreamTask)
       }
     }
 

@@ -1,6 +1,6 @@
 import { simpleGit, type SimpleGit } from 'simple-git'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname, basename, resolve } from 'node:path'
 import type { DiffResult, DiffFile, Task } from '@shared/types'
 
 function toWorktreeBasePath(projectRoot: string): string {
@@ -65,18 +65,35 @@ export async function mergeWorktree(task: Task): Promise<void> {
   if (!task.worktreePath || !task.branchName) {
     throw new Error('Task has no worktree to merge')
   }
-  // Find the main worktree via `git worktree list` rather than relying on
-  // the `-orch-worktrees` directory suffix (which breaks if the user
-  // configures a custom worktree base path).
+
+  // Use git rev-parse --git-common-dir to reliably find the main worktree,
+  // rather than parsing `git worktree list` output (which had a boolean logic bug).
   const git = simpleGit(task.worktreePath)
-  const raw = await git.raw(['worktree', 'list', '--porcelain'])
-  const mainPath = raw
-    .split('\n\n')
-    .find((block) => block.includes('HEAD') && !block.includes('worktree ') === false && !block.includes('prunable'))
-    ?.match(/^worktree (.+)$/m)?.[1]
-  if (!mainPath) throw new Error('Cannot determine main worktree path')
+  const commonDir = (await git.raw(['rev-parse', '--git-common-dir'])).trim()
+  // commonDir is the .git directory of the main repo; its parent is the main worktree
+  const mainPath = resolve(commonDir, '..')
+
+  if (!mainPath || !existsSync(mainPath)) {
+    throw new Error('Cannot determine main worktree path')
+  }
+
   const mainGit = simpleGit(mainPath)
-  await mainGit.raw(['merge', '--no-ff', task.branchName])
+
+  try {
+    await mainGit.raw(['merge', '--no-ff', task.branchName])
+  } catch (mergeErr) {
+    // On merge failure (conflicts), automatically abort to leave the repo clean
+    try {
+      await mainGit.raw(['merge', '--abort'])
+    } catch (abortErr) {
+      console.error('[worktree] merge --abort failed:', abortErr)
+    }
+    throw new Error(
+      `Merge failed (conflict detected, merge aborted): ${
+        mergeErr instanceof Error ? mergeErr.message : String(mergeErr)
+      }`
+    )
+  }
 }
 
 export async function getWorktreeDiff(worktreePath: string): Promise<DiffResult> {
