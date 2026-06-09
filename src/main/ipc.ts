@@ -47,7 +47,7 @@ export function registerApprovedPath(absPath: string): void {
 
 /** Common path validation: non-empty string, absolute, exists, resolvable, not a device path.
  *  Does NOT check approved-paths — that's validateUserPath's job. */
-function validateAbsolutePath(p: string, label: string): string {
+export function validateAbsolutePath(p: string, label: string): string {
   if (typeof p !== 'string' || p.length === 0) {
     throw new Error(`${label}: path must be a non-empty string`)
   }
@@ -74,7 +74,7 @@ function validateAbsolutePath(p: string, label: string): string {
 /** Validate that a renderer-supplied path is absolute, exists, and is under an
  *  approved project root or worktree base. Prevents renderer-driven FS access
  *  to arbitrary paths. */
-function validateUserPath(p: string, label: string): string {
+export function validateUserPath(p: string, label: string): string {
   const normalizedReal = validateAbsolutePath(p, label)
 
   // Core security check: must be under an approved project root
