@@ -8,7 +8,8 @@ import { checkpointManager } from './checkpoint'
 import { notifier } from './notifier'
 import { broadcast } from './broadcast'
 import * as keytar from 'keytar'
-import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS } from '@shared/constants'
+import { PROJECT_KEYTAR_SERVICE, KEYTAR_KEYS } from '
+import { worktreeWatcher } from './worktree-watcher'@shared/constants'
 
 const sessions = new SessionRepository()
 const audit = new AuditRepository()

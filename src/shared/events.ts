@@ -3,6 +3,7 @@
 // Receive (Main -> Renderer) uses ipcMain.emit / webContents.send
 
 export const ELECTRON_EVENTS = {
+  WORKTREE_FILE_CHANGE: 'worktree:file-change',
   // Session events (Main -> Renderer)
   SESSION_OUTPUT: 'session:output',
   SESSION_STATUS: 'session:status',

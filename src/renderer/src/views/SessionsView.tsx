@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { WorktreeDashboard } from '../components/WorktreeDashboard'
 import {
   Circle,
   Loader2,
@@ -337,7 +338,8 @@ function SessionOutput({ sessionId, mode, fullscreen }: SessionOutputProps): Rea
   }, [mode, sessionId])
 
   return (
-    <TerminalPane
+    <WorktreeDashboard sessionId={selected.id} />
+        <TerminalPane
       fullscreen={fullscreen}
       onReady={(a) => {
         a.clear()
